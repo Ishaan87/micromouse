@@ -1,4 +1,6 @@
 # Micromouse
+## Documentation
+Notion Link - https://righteous-galliform-706.notion.site/Micromouse-Documentry-2f6daaf2795180228459fb6c378282ec?source=copy_link
 ## File Structure
 our code is divided into 5 different files - 
 ### Config.h 
