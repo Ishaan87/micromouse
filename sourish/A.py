@@ -84,3 +84,73 @@ def reconstruct_path(goal_node: Dict) -> List[Tuple[int, int]]: #Trace the winni
         current = current['parent'] #then move to its parent
         
     return path[::-1] #outputs the list of coordinates representing full path from start to goal
+
+# Copied from MMS Github
+def mazeWidth() -> int:
+    pass
+
+def mazeHeight() -> int:
+    pass
+
+def wallFront(numHalfSteps: int = 1) -> bool:
+    pass
+
+def wallRight(numHalfSteps: int = 1) -> bool:
+    pass
+
+def wallLeft(numHalfSteps: int = 1) -> bool:
+    pass
+
+def wallBack(numHalfSteps: int = 1) -> bool:
+    pass
+
+def moveForward(distance: int = 1) -> None:
+    pass
+
+def moveForwardHalf(numHalfSteps: int = 1) -> None:
+    pass
+
+def turnRight() -> None:
+    pass
+
+def turnLeft() -> None:
+    pass
+
+def turnRight45() -> None:
+    pass
+
+def turnLeft45() -> None:
+    pass
+
+def setWall(x: int, y: int, direction: str) -> None:
+    pass
+
+def clearWall(x: int, y: int, direction: str) -> None:
+    pass
+
+def setColor(x: int, y: int, color: str) -> None:
+    pass
+
+def clearColor(x: int, y: int) -> None:
+    pass
+
+def clearAllColor() -> None:
+    pass
+
+def setText(x: int, y: int, text: str) -> None:
+    pass
+
+def clearText(x: int, y: int) -> None:
+    pass
+
+def clearAllText() -> None:
+    pass
+
+def wasReset() -> bool:
+    pass
+
+def ackReset() -> None:
+    pass
+
+def getStat(stat: str) -> float:
+    pass
