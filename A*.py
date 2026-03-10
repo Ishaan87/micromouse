@@ -1,49 +1,39 @@
-from typing import List, Tuple, Dict, Set
-import numpy as np
-import heapq
-from math import sqrt
+from typing import List, Tuple, Dict, Set #import typing hint tools from Python library
+import numpy as np #numpy used to represent the grid as matrix
+import heapq #library used to create priority queue (no need to scan everytime, it keeps thing automatically sorted): heappush- add node, heappop- remove lowest cost node
 
 def create_node(position: Tuple[int, int], g: float = float('inf'), h: float = 0.0, parent: Dict = None) -> Dict:
-    return {
-        'position': position,
-        'g': g,
-        'h': h,
+    # every grid cell that we explore is treated as a node
+    return { #dictionary with specifications of the node
+        'position': position, #coordinates of the node
+        'g': g, #cost from start node to this node (default: infinity as we assume node very far until better path is found)
+        'h': h, #heuristic estimate from this node to the endpoint
         'f': g + h,
-        'parent': parent
+        'parent': parent #stores the previous node in path, useful for reconstruction of path
     }
 
-def calculate_heuristic(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
-    x1, y1 = pos1
-    x2, y2 = pos2
-    return (abs(x2 - x1) + abs(y2 - y1))  # We are using Manhattan heuristics for first iteration (movement only in four directions)
-
-def get_valid_neighbors(grid: np.ndarray, position: Tuple[int, int]) -> List[Tuple[int, int]]:
-#grid: 2D numpy array where 0 represents walkable cells and 1 represents obstacles
-    x, y = position
-    rows, cols = grid.shape
+def get_valid_neighbors(grid: np.ndarray, position: Tuple[int, int]) -> List[Tuple[int, int]]: #np.ndarray: N-dimensional array object in the numpy library of python
+#grid: 2 dimensional numpy array where 0 represents walkable cells and 1 represents obstacles
+    x, y = position #current location
+    rows, cols = grid.shape #attribute of np.ndarray
     possible_moves = [
         (x+1, y), (x-1, y),   
         (x, y+1), (x, y-1) #not allowing diagonal movement at the moment
     ]
     return [
         (nx, ny) for nx, ny in possible_moves
-        if 0 <= nx < rows and 0 <= ny < cols  
+        if 0 <= nx < rows and 0 <= ny < cols  #within the grid, not outside the maze
         and grid[nx, ny] == 0 #not an obstacle
-    ]
+    ] 
 
-def reconstruct_path(goal_node: Dict) -> List[Tuple[int, int]]:
-    path = []
-    current = goal_node
-    
-    while current is not None:
-        path.append(current['position'])
-        current = current['parent']
-        
-    return path[::-1]
-
+def calculate_heuristic(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float: #used to calculate the "h" value in this algorithm
+    x1, y1 = pos1 #current node position
+    x2, y2 = pos2 #position of the goal
+    return (abs(x2 - x1) + abs(y2 - y1))  # We are using Manhattan heuristics for first iteration (movement only in four directions)
 
 def find_path(grid: np.ndarray, start: Tuple[int, int], goal: Tuple[int, int]) -> List[Tuple[int, int]]:
-    start_node = create_node(
+    # we provide the grid, starting & ending coordinate. It will return list of positions representing shortest path
+    start_node = create_node( 
         position=start,
         g=0,
         h=calculate_heuristic(start, goal)
@@ -84,3 +74,13 @@ def find_path(grid: np.ndarray, start: Tuple[int, int], goal: Tuple[int, int]) -
                 neighbour['parent']= current_node
                 heapq.heappush(open_list, (neighbour['f'], neighbour_pos))
     return []
+
+def reconstruct_path(goal_node: Dict) -> List[Tuple[int, int]]: #Trace the winning path back to the start
+    path = []
+    current = goal_node #begin at goal and work backwards using parent pointers
+    
+    while current is not None: #loop ends when we reach start node because it has no parent
+        path.append(current['position']) #add current node's position
+        current = current['parent'] #then move to its parent
+        
+    return path[::-1] #outputs the list of coordinates representing full path from start to goal
