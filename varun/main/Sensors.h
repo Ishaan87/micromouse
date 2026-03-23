@@ -20,7 +20,7 @@ struct DistanceData {
 
 void initSensors() {
   // Start I2C using your custom ESP32-C3 pins
-  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.begin(I2C_SCL, I2C_SDA);
 
   // 1. Initialize MPU6050
   if (!mpu.begin()) {

@@ -1,139 +1,171 @@
+#include <Arduino.h>
 #include "Config.h"
-#include "Encoders.h"
 #include "Motors.h"
+#include "Encoders.h"
 #include "Sensors.h"
 
 // ==========================================
 // TUNING PARAMETERS (You will need to adjust these!)
 // ==========================================
+// Velocity PID Constants
+float Kp_vel = 5.0;
+float Ki_vel = 0.0;
+float Kd_vel = 1.0;
 
-// --- Rotational (Steering) PD Constants ---
-float Kp_imu = 3.5;       
-float Kd_imu = 0.2;       // NEW: The "shock absorber" for steering
-float Kp_wall = 0.4;      
-float Kd_wall = 0.05;     // NEW: The "shock absorber" for wall centering
-float alpha_D = 0.3;      // NEW: Low-Pass Filter strength (0.0 to 1.0)
+// Heading (Yaw) PID Constants
+float Kp_yaw = 2.0;
+float Ki_yaw = 0.0;
+float Kd_yaw = 0.5;
 
-// --- Translational (Distance) P Constants ---
-float Kp_dist_encoder = 0.5; 
-float Kp_dist_lidar = 2.0;   
-
-// --- Maze Geometry Constants ---
-const int IDEAL_SIDE_DIST = 45;  
-const int IDEAL_STOP_DIST = 45;  
-const int WALL_THRESHOLD = 120;  
-const long TARGET_TICKS = 800;   
+// Target settings
+float targetVelocity = 15.0; // Target ticks per loop interval
+float targetYaw = 0.0;       // 0 degrees = straight forward
 
 // ==========================================
-// STATE VARIABLES
+// SYSTEM VARIABLES
 // ==========================================
-float currentHeading = 0.0;
-unsigned long lastTimeMicros = 0;
-bool isMoving = true; 
+const int LOOP_INTERVAL_MS = 20; // 50Hz control loop
+unsigned long lastLoopTime = 0;
 
-// --- Memory for the Derivative Term ---
-float last_headingError = 0.0;
-float filtered_D_heading = 0.0;
+// Integral and Derivative state variables
+float integral_vel_L = 0, integral_vel_R = 0;
+float prev_error_vel_L = 0, prev_error_vel_R = 0;
 
-float last_positionError = 0.0;
-float filtered_D_position = 0.0;
+float integral_yaw = 0, prev_error_yaw = 0;
+float current_yaw_angle = 0.0;
 
+long prevLeftTicks = 0;
+long prevRightTicks = 0;
+
+// ==========================================
+// FUNCTION PROTOTYPES
+// ==========================================
+void waitForStartSignal();
+void runControlLoop(float dt);
+
+// ==========================================
+// SETUP
+// ==========================================
 void setup() {
   Serial.begin(115200);
-  
+  delay(1000);
+
+  Serial.println("Initializing Subsystems...");
   initMotors();
   initEncoders();
-  initSensors(); 
+  initSensors();
   
-  calibrateGyro(); 
-  
-  Serial.println("Starting in 2 seconds...");
-  delay(2000); 
+  // Calibrate Gyro while the bot is perfectly still
+  calibrateGyro();
 
-  resetEncoders(); 
-  lastTimeMicros = micros();
+  // Block execution until you trigger the start sequence
+  waitForStartSignal();
+
+  // Reset trackers right before moving
+  resetEncoders();
+  prevLeftTicks = 0;
+  prevRightTicks = 0;
+  lastLoopTime = millis();
 }
 
+// ==========================================
+// MAIN LOOP
+// ==========================================
 void loop() {
-  if (!isMoving) {
-    stopMotors();
-    Serial.println("Target Reached. Stopped.");
-    delay(1000); 
-    return; 
-  }
-
-  unsigned long currentMicros = micros();
-  // Prevent divide-by-zero if loop runs impossibly fast
-  float dt = max((currentMicros - lastTimeMicros) / 1000000.0, 0.0001); 
-  lastTimeMicros = currentMicros;
-
-  float gyroVelocity = readGyroHeading();
-  currentHeading += (gyroVelocity * dt); 
-
-  DistanceData lidars = readLidars();
-  long currentTicks = (leftTicks + rightTicks) / 2; 
-
-  // ==========================================
-  // LOOP A: TRANSLATIONAL PID (Speed)
-  // ==========================================
-  int baseSpeed = 0;
-  float distanceError = 0;
-
-  if (lidars.front < WALL_THRESHOLD) {
-    distanceError = lidars.front - IDEAL_STOP_DIST;
-    baseSpeed = distanceError * Kp_dist_lidar;
-  } else {
-    distanceError = TARGET_TICKS - currentTicks;
-    baseSpeed = distanceError * Kp_dist_encoder;
-  }
-
-  baseSpeed = constrain(baseSpeed, -100, 150); 
-
-  if (abs(distanceError) < 5) {
-    isMoving = false; 
-  }
-
-  // ==========================================
-  // LOOP B: ROTATIONAL PD (Steering)
-  // ==========================================
-  float targetHeading = 0.0; 
-  float positionError = 0.0;
-
-  bool hasLeft = (lidars.left < WALL_THRESHOLD);
-  bool hasRight = (lidars.right < WALL_THRESHOLD);
-
-  if (hasLeft && hasRight) {
-    positionError = lidars.left - lidars.right; 
-  } else if (hasLeft && !hasRight) {
-    positionError = lidars.left - IDEAL_SIDE_DIST;
-  } else if (hasRight && !hasLeft) {
-    positionError = IDEAL_SIDE_DIST - lidars.right; 
-  }
-
-  // --- Filtered D-Term for Wall Centering ---
-  float raw_D_position = (positionError - last_positionError) / dt;
-  filtered_D_position = (alpha_D * raw_D_position) + ((1.0 - alpha_D) * filtered_D_position);
-  last_positionError = positionError;
-
-  // Calculate target heading using both P and D
-  targetHeading = (positionError * Kp_wall) + (filtered_D_position * Kd_wall);
-  targetHeading = constrain(targetHeading, -10.0, 10.0);
-
-  // --- Filtered D-Term for IMU Heading ---
-  float headingError = targetHeading - currentHeading;
+  unsigned long currentTime = millis();
   
-  float raw_D_heading = (headingError - last_headingError) / dt;
-  filtered_D_heading = (alpha_D * raw_D_heading) + ((1.0 - alpha_D) * filtered_D_heading);
-  last_headingError = headingError;
+  // Run the PID calculations strictly at the defined interval
+  if (currentTime - lastLoopTime >= LOOP_INTERVAL_MS) {
+    float dt = (currentTime - lastLoopTime) / 1000.0; // Delta time in seconds
+    lastLoopTime = currentTime;
+    
+    runControlLoop(dt);
+  }
+}
 
-  // Final Steering Command
-  int correctionSpeed = (int)((Kp_imu * headingError) + (Kd_imu * filtered_D_heading));
+// ==========================================
+// CONTROL LOOP (VELOCITY + HEADING PID)
+// ==========================================
+void runControlLoop(float dt) {
+  // 1. Calculate current wheel velocities (ticks per dt)
+  // Disable interrupts briefly to safely read volatile 32-bit integers
+  noInterrupts();
+  long currentLeftTicks = leftTicks;
+  long currentRightTicks = rightTicks;
+  interrupts();
 
-  // ==========================================
-  // THE MIXER
-  // ==========================================
-  int leftMotorSpeed = baseSpeed - correctionSpeed;
-  int rightMotorSpeed = baseSpeed + correctionSpeed;
+  float vel_L = (float)(currentLeftTicks - prevLeftTicks);
+  float vel_R = (float)(currentRightTicks - prevRightTicks);
+  
+  prevLeftTicks = currentLeftTicks;
+  prevRightTicks = currentRightTicks;
 
-  setMotorSpeeds(leftMotorSpeed, rightMotorSpeed);
+  // 2. Velocity PID Calculations
+  float error_vel_L = targetVelocity - vel_L;
+  float error_vel_R = targetVelocity - vel_R;
+
+  integral_vel_L += error_vel_L * dt;
+  integral_vel_R += error_vel_R * dt;
+
+  float deriv_vel_L = (error_vel_L - prev_error_vel_L) / dt;
+  float deriv_vel_R = (error_vel_R - prev_error_vel_R) / dt;
+
+  float base_pwm_L = (Kp_vel * error_vel_L) + (Ki_vel * integral_vel_L) + (Kd_vel * deriv_vel_L);
+  float base_pwm_R = (Kp_vel * error_vel_R) + (Ki_vel * integral_vel_R) + (Kd_vel * deriv_vel_R);
+
+  prev_error_vel_L = error_vel_L;
+  prev_error_vel_R = error_vel_R;
+
+  // 3. Heading PID Calculation
+  // Read angular velocity and integrate it to track the absolute angle
+  float yaw_rate = readGyroHeading(); 
+  current_yaw_angle += yaw_rate * dt; 
+
+  float error_yaw = targetYaw - current_yaw_angle;
+  integral_yaw += error_yaw * dt;
+  float deriv_yaw = (error_yaw - prev_error_yaw) / dt;
+
+  // Heading correction value
+  float heading_correction = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
+  prev_error_yaw = error_yaw;
+
+  // 4. Combine and Apply Speeds
+  // If the bot drifts left (positive yaw), heading_correction becomes negative.
+  // We subtract it from the left wheel and add to the right to correct back to 0.
+  int final_pwm_L = (int)(base_pwm_L - heading_correction);
+  int final_pwm_R = (int)(base_pwm_R + heading_correction);
+
+  setMotorSpeeds(final_pwm_L, final_pwm_R);
+}
+
+// ==========================================
+// START SEQUENCE LOGIC
+// ==========================================
+void waitForStartSignal() {
+  Serial.println("Ready. Block LEFT and RIGHT lidars (< 50mm) to arm...");
+  
+  bool isArmed = false;
+
+  while (true) {
+    DistanceData lidars = readLidars();
+
+    // Check if hands are covering both side lidars
+    if (!isArmed && lidars.left < 50 && lidars.right < 50) {
+      isArmed = true;
+      Serial.println("ARMED! Remove hands to start.");
+    }
+
+    // If armed, wait for hands to be removed (hysteresis > 100mm)
+    if (isArmed && lidars.left > 100 && lidars.right > 100) {
+      Serial.println("Starting in 5 seconds...");
+      
+      // Flash motors or LED here if you want a visual cue
+      delay(5000); 
+      
+      Serial.println("GO!");
+      return; // Exit loop and begin main program
+    }
+
+    delay(50); // Small delay to prevent I2C spamming
+  }
 }
