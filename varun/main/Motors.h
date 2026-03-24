@@ -20,7 +20,7 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
   leftSpeed = constrain(leftSpeed, -255, 255);
   rightSpeed = constrain(rightSpeed, -255, 255);
 
-  // Left Motor Logic
+  // Left Motor Logic (Unchanged)
   if (leftSpeed >= 0) {
     digitalWrite(M1_DIR, HIGH); // Forward
     analogWrite(M1_PWM, leftSpeed);
@@ -29,12 +29,12 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
     analogWrite(M1_PWM, -leftSpeed); // Make speed positive for PWM
   }
 
-  // Right Motor Logic
+  // Right Motor Logic (FLIPPED)
   if (rightSpeed >= 0) {
-    digitalWrite(M2_DIR, HIGH); // Forward
+    digitalWrite(M2_DIR, LOW);  // Forward is now LOW
     analogWrite(M2_PWM, rightSpeed);
   } else {
-    digitalWrite(M2_DIR, LOW);  // Reverse
+    digitalWrite(M2_DIR, HIGH); // Reverse is now HIGH
     analogWrite(M2_PWM, -rightSpeed); 
   }
 }

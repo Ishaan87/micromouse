@@ -19,15 +19,18 @@ struct DistanceData {
 };
 
 void initSensors() {
+  Serial.println("initsensors");
   // Start I2C using your custom ESP32-C3 pins
   Wire.begin(I2C_SCL, I2C_SDA);
+  Serial.println("wirebegin");
 
   // 1. Initialize MPU6050
   if (!mpu.begin()) {
     Serial.println("CRITICAL ERROR: Failed to find MPU6050 chip");
     while(1);
   }
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG); 
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+
   
   // 2. Initialize XSHUT pins to multiplex the LiDARs
   pinMode(XSHUT_FRONT, OUTPUT);
@@ -36,7 +39,7 @@ void initSensors() {
 
   digitalWrite(XSHUT_FRONT, LOW);
   digitalWrite(XSHUT_LEFT, LOW);
-  digitalWrite(XSHUT_RIGHT, LOW);
+  digitalWrite(XSHUT_RIGHT, LOW); 
   delay(10);
 
   // Wake up and assign new I2C addresses sequentially
@@ -48,6 +51,7 @@ void initSensors() {
 
   digitalWrite(XSHUT_RIGHT, HIGH); delay(10);
   lox_right.begin(0x32);
+  Serial.println("done");
 }
 
 void calibrateGyro() {

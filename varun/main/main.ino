@@ -7,23 +7,23 @@
 // ==========================================
 // TUNING PARAMETERS
 // ==========================================
-// Velocity PID Constants
-float Kp_vel = 5.0;
-float Ki_vel = 0.1;
-float Kd_vel = 1.0;
+// Velocity PID Constants (Inner Loop -> Outputs PWM)
+float Kp_vel = 2;  // Pushes the motor to the target speed
+float Ki_vel = 0.0; // BUILDS UP to hold the steady-state PWM power
+float Kd_vel = 0.1;  // Dampens sudden spikes
 
-// Heading (Yaw) PID Constants
-float Kp_yaw = 2.0;
-float Ki_yaw = 0.0;
-float Kd_yaw = 0.5;
+// Heading (Yaw) PID Constants (Outer Loop -> Outputs Velocity Ticks)
+float Kp_yaw = 0.5;  // 1 degree of error = 0.5 ticks of speed difference
+float Ki_yaw = 0.1;  // Keep 0 to prevent windup on turns
+float Kd_yaw = 0.1;  // Helps smooth out the steering
 
 // Target settings
-float targetVelocity = 15.0; // Target ticks per loop interval
-float targetYaw = 0.0;       // 0 degrees = straight forward
+float baseTargetVelocity = 15.0; // Base forward speed (ticks per 20ms)
+float targetYaw = 0.0;           // 0 degrees = straight forward
 
-// Tolerances (Deadbands)
-float vel_tolerance = 1.0;   // Ticks per interval tolerance
-float yaw_tolerance = 0.5;   // Degrees tolerance
+// Tolerances (Set to 0 for tuning to prevent deadband jitter)
+float vel_tolerance = 0.0; 
+float yaw_tolerance = 0.0; 
 
 // ==========================================
 // SYSTEM VARIABLES
@@ -44,6 +44,10 @@ float current_yaw_angle = 0.0;
 long prevLeftTicks = 0;
 long prevRightTicks = 0;
 
+// Global PWM outputs carried over between loops
+int final_pwm_L = 0;
+int final_pwm_R = 0;
+
 // ==========================================
 // FUNCTION PROTOTYPES
 // ==========================================
@@ -56,7 +60,7 @@ void printTelemetry();
 // ==========================================
 void setup() {
   Serial.begin(115200);
-  delay(1000); // Give serial monitor time to connect
+  delay(1000); 
 
   Serial.println("\n=================================");
   Serial.println("  MICROMOUSE SYSTEM STARTUP");
@@ -73,20 +77,21 @@ void setup() {
   
   Serial.println(">>> Sensor Init Complete. <<<");
   
-  // Calibrate Gyro
   Serial.println("\n[!] PREPARING GYRO CALIBRATION [!]");
   Serial.println("Please ensure the bot is perfectly still on a flat surface.");
-  delay(1000);
+  delay(2000);
   calibrateGyro(); 
   Serial.println("Gyro Calibration Successful.");
 
-  // Block execution until you trigger the start sequence
   waitForStartSignal();
 
-  // Reset trackers right before moving
+  // Reset everything right before the very first loop
   resetEncoders();
   prevLeftTicks = 0;
   prevRightTicks = 0;
+  integral_vel_L = 0;
+  integral_vel_R = 0;
+  
   lastLoopTime = millis();
   lastPrintTime = millis();
 }
@@ -97,15 +102,15 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
   
-  // 1. Run the PID calculations strictly at the defined interval
+  // 1. 50Hz Fast Control Loop
   if (currentTime - lastLoopTime >= LOOP_INTERVAL_MS) {
-    float dt = (currentTime - lastLoopTime) / 1000.0; // Delta time in seconds
+    float dt = (currentTime - lastLoopTime) / 1000.0; 
     lastLoopTime = currentTime;
     
     runControlLoop(dt);
   }
 
-  // 2. Print telemetry at a slower rate to avoid lagging the controller
+  // 2. 10Hz Slow Telemetry Loop
   if (currentTime - lastPrintTime >= PRINT_INTERVAL_MS) {
     lastPrintTime = currentTime;
     printTelemetry();
@@ -113,10 +118,10 @@ void loop() {
 }
 
 // ==========================================
-// CONTROL LOOP (VELOCITY + HEADING PID)
+// CONTROL LOOP (CASCADED PID)
 // ==========================================
 void runControlLoop(float dt) {
-  // --- 1. Get Velocity ---
+  // --- 1. Read Actual Velocities ---
   noInterrupts();
   long currentLeftTicks = leftTicks;
   long currentRightTicks = rightTicks;
@@ -128,14 +133,35 @@ void runControlLoop(float dt) {
   prevLeftTicks = currentLeftTicks;
   prevRightTicks = currentRightTicks;
 
-  // --- 2. Velocity PID Calculations with Deadband ---
-  float error_vel_L = targetVelocity - vel_L;
-  float error_vel_R = targetVelocity - vel_R;
+  // --- 2. Heading PID (Outer Loop) ---
+  float yaw_rate = readGyroHeading(); 
+  current_yaw_angle += yaw_rate * dt; 
 
-  // Apply Tolerance/Deadband
+  float error_yaw = targetYaw - current_yaw_angle;
+  
+  if (abs(error_yaw) <= yaw_tolerance) {
+    error_yaw = 0;
+    prev_error_yaw = 0; 
+  }
+
+  integral_yaw += error_yaw * dt;
+  float deriv_yaw = (error_yaw - prev_error_yaw) / dt;
+
+  // Output is the difference in ticks required to straighten out
+  float heading_correction_vel = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
+  prev_error_yaw = error_yaw;
+
+  // Calculate dynamic target velocities for each wheel
+  float target_vel_L = baseTargetVelocity - heading_correction_vel;
+  float target_vel_R = baseTargetVelocity + heading_correction_vel;
+
+  // --- 3. Velocity PID (Inner Loop) ---
+  float error_vel_L = target_vel_L - vel_L;
+  float error_vel_R = target_vel_R - vel_R;
+
   if (abs(error_vel_L) <= vel_tolerance) {
     error_vel_L = 0;
-    prev_error_vel_L = 0; // Prevent derivative kick when exiting deadband
+    prev_error_vel_L = 0; 
   }
   if (abs(error_vel_R) <= vel_tolerance) {
     error_vel_R = 0;
@@ -148,34 +174,14 @@ void runControlLoop(float dt) {
   float deriv_vel_L = (error_vel_L - prev_error_vel_L) / dt;
   float deriv_vel_R = (error_vel_R - prev_error_vel_R) / dt;
 
-  float base_pwm_L = (Kp_vel * error_vel_L) + (Ki_vel * integral_vel_L) + (Kd_vel * deriv_vel_L);
-  float base_pwm_R = (Kp_vel * error_vel_R) + (Ki_vel * integral_vel_R) + (Kd_vel * deriv_vel_R);
+  // Calculate required electrical power (PWM)
+  final_pwm_L = (int)((Kp_vel * error_vel_L) + (Ki_vel * integral_vel_L) + (Kd_vel * deriv_vel_L));
+  final_pwm_R = (int)((Kp_vel * error_vel_R) + (Ki_vel * integral_vel_R) + (Kd_vel * deriv_vel_R));
 
   prev_error_vel_L = error_vel_L;
   prev_error_vel_R = error_vel_R;
 
-  // --- 3. Heading PID Calculation with Deadband ---
-  float yaw_rate = readGyroHeading(); 
-  current_yaw_angle += yaw_rate * dt; 
-
-  float error_yaw = targetYaw - current_yaw_angle;
-  
-  // Apply Yaw Tolerance
-  if (abs(error_yaw) <= yaw_tolerance) {
-    error_yaw = 0;
-    prev_error_yaw = 0; 
-  }
-
-  integral_yaw += error_yaw * dt;
-  float deriv_yaw = (error_yaw - prev_error_yaw) / dt;
-
-  float heading_correction = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
-  prev_error_yaw = error_yaw;
-
-  // --- 4. Combine and Apply Speeds ---
-  int final_pwm_L = (int)(base_pwm_L - heading_correction);
-  int final_pwm_R = (int)(base_pwm_R + heading_correction);
-
+  // --- 4. Apply Speeds ---
   setMotorSpeeds(final_pwm_L, final_pwm_R);
 }
 
@@ -183,21 +189,21 @@ void runControlLoop(float dt) {
 // TELEMETRY PRINTING
 // ==========================================
 void printTelemetry() {
-  DistanceData lidars = readLidars();
-  
   noInterrupts();
   long currLeft = leftTicks;
   long currRight = rightTicks;
   interrupts();
 
-  Serial.print("Lidar[L/F/R]: ");
-  Serial.print(lidars.left); Serial.print(" / ");
-  Serial.print(lidars.front); Serial.print(" / ");
-  Serial.print(lidars.right);
+  Serial.print("TargetVel: ");
+  Serial.print(baseTargetVelocity);
   
   Serial.print("  |  Enc[L/R]: ");
   Serial.print(currLeft); Serial.print(" / ");
   Serial.print(currRight);
+
+  Serial.print("  |  PWM[L/R]: ");
+  Serial.print(final_pwm_L); Serial.print(" / ");
+  Serial.print(final_pwm_R);
 
   Serial.print("  |  Yaw(deg): ");
   Serial.println(current_yaw_angle, 2);
@@ -220,12 +226,12 @@ void waitForStartSignal() {
     if (!isArmed && lidars.left < 50 && lidars.right < 50) {
       isArmed = true;
       Serial.println("\n[!] ARMED! Remove hands to commence countdown...");
-      delay(500); // Debounce
+      delay(500); 
     }
 
     if (isArmed && lidars.left > 100 && lidars.right > 100) {
-      Serial.println("\nStarting in 5 seconds...");
-      for(int i = 5; i > 0; i--) {
+      Serial.println("\nStarting in 3 seconds...");
+      for(int i = 3; i > 0; i--) {
         Serial.print(i); Serial.println("...");
         delay(1000);
       }
@@ -234,6 +240,6 @@ void waitForStartSignal() {
       return; 
     }
 
-    delay(50); // Small delay to prevent I2C spamming while waiting
+    delay(50); 
   }
 }
