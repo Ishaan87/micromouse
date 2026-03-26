@@ -57,7 +57,7 @@ void initSensors() {
 void calibrateGyro() {
   Serial.print("Calibrating Gyro... Do NOT move the bot! ");
   float total = 0;
-  int numSamples = 500;
+  int numSamples = 1000;
   
   for (int i = 0; i < numSamples; i++) {
     sensors_event_t a, g, temp;
@@ -82,7 +82,7 @@ float readGyroHeading() {
   float adjusted_Velocity = raw_Velocity - gyro_bias;
 
   // DEADZONE: Ignore microscopic vibrations to prevent integration drift
-  if (abs(adjusted_Velocity) < 0.2) { 
+  if (abs(adjusted_Velocity) < 0.25) { 
     return 0.0; 
   }
   
