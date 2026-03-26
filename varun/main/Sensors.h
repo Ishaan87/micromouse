@@ -82,7 +82,7 @@ float readGyroHeading() {
   float adjusted_Velocity = raw_Velocity - gyro_bias;
 
   // DEADZONE: Ignore microscopic vibrations to prevent integration drift
-  if (abs(adjusted_Velocity) < 0.15) { 
+  if (abs(adjusted_Velocity) < 0.2) { 
     return 0.0; 
   }
   

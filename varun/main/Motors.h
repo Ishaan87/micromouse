@@ -23,19 +23,19 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
   // Left Motor Logic (Unchanged)
   if (leftSpeed >= 0) {
     digitalWrite(M1_DIR, LOW); // Forward
-    analogWrite(M1_PWM, -leftSpeed);
+    analogWrite(M1_PWM, leftSpeed);
   } else {
     digitalWrite(M1_DIR, HIGH);  // Reverse
-    analogWrite(M1_PWM, leftSpeed); // Make speed positive for PWM
+    analogWrite(M1_PWM, -leftSpeed); // Make speed positive for PWM
   }
 
   // Right Motor Logic (FLIPPED)
   if (rightSpeed >= 0) {
-    digitalWrite(M2_DIR, HIGH);  // Forward is now LOW
-    analogWrite(M2_PWM, -rightSpeed);
+    digitalWrite(M2_DIR, LOW);  // Forward is now LOW
+    analogWrite(M2_PWM, rightSpeed);
   } else {
-    digitalWrite(M2_DIR, LOW); // Reverse is now HIGH
-    analogWrite(M2_PWM, rightSpeed); 
+    digitalWrite(M2_DIR, HIGH); // Reverse is now HIGH
+    analogWrite(M2_PWM, -rightSpeed); 
   }
 }
 

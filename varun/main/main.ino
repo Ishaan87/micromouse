@@ -8,17 +8,17 @@
 // TUNING PARAMETERS
 // ==========================================
 // Velocity PID Constants (Inner Loop -> Outputs PWM)
-float Kp_vel = 4;  // Pushes the motor to the target speed
+float Kp_vel = 10;  // Pushes the motor to the target speed
 float Ki_vel = 0.0; // BUILDS UP to hold the steady-state PWM power
 float Kd_vel = 0.1;  // Dampens sudden spikes
 
 // Heading (Yaw) PID Constants (Outer Loop -> Outputs Velocity Ticks)
-float Kp_yaw = 0.0;  // 1 degree of error = 0.5 ticks of speed difference
-float Ki_yaw = 0.0;  // Keep 0 to prevent windup on turns
-float Kd_yaw = 0.0;  // Helps smooth out the steering
+float Kp_yaw = 0.1;  // 1 degree of error = 0.5 ticks of speed difference
+float Ki_yaw = 0.01;  // Keep 0 to prevent windup on turns
+float Kd_yaw = 0.01;  // Helps smooth out the steering
 
 // Target settings
-float baseTargetVelocity = 1.0; // Base forward speed (ticks per 20ms)
+float baseTargetVelocity = 15.0; // Base forward speed (ticks per 20ms)
 float targetYaw = 0.0;           // 0 degrees = straight forward
 
 // Tolerances (Set to 0 for tuning to prevent deadband jitter)
