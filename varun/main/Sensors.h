@@ -40,16 +40,16 @@ void initSensors() {
   digitalWrite(XSHUT_FRONT, LOW);
   digitalWrite(XSHUT_LEFT, LOW);
   digitalWrite(XSHUT_RIGHT, LOW); 
-  delay(10);
+  delay(50);
 
   // Wake up and assign new I2C addresses sequentially
-  digitalWrite(XSHUT_FRONT, HIGH); delay(10);
+  digitalWrite(XSHUT_FRONT, HIGH); delay(50);
   lox_front.begin(0x30);
 
-  digitalWrite(XSHUT_LEFT, HIGH); delay(10);
+  digitalWrite(XSHUT_LEFT, HIGH); delay(50);
   lox_left.begin(0x31);
 
-  digitalWrite(XSHUT_RIGHT, HIGH); delay(10);
+  digitalWrite(XSHUT_RIGHT, HIGH); delay(50);
   lox_right.begin(0x32);
   Serial.println("done");
 }

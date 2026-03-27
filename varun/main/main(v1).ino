@@ -10,7 +10,7 @@
 // ==========================================
 // WIRELESS WEB SERVER SETTINGS
 // ==========================================
-const char *ssid = "Jerry";
+const char *ssid = "Varun_Mouse";
 const char *password = "mouse1234"; 
 
 WebServer server(80);                // Hosts the HTML Dashboard on port 80
@@ -20,52 +20,85 @@ WebSocketsServer webSocket(81);      // Streams the live data on port 81
 // THE HTML DASHBOARD (Embedded)
 // ==========================================
 const char index_html[] PROGMEM = R"rawliteral(
-const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wireless Serial Monitor</title>
+    <title>Varun's Micromouse Dashboard</title>
     <style>
-        body { font-family: monospace; background: #000; color: #0f0; margin: 0; padding: 20px; }
-        h2 { color: #fff; margin-top: 0; }
-        #status { color: #ff0; margin-bottom: 10px; }
-        #terminal { 
-            background: #111; 
-            border: 1px solid #333; 
-            padding: 10px; 
-            height: 70vh; 
-            overflow-y: auto; 
-            white-space: pre-wrap; 
-            font-size: 14px;
-        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
+        h1 { color: #38bdf8; letter-spacing: 1px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
+        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
+        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
+        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
+        .val.dual { font-size: 2.5rem; color: #38bdf8; }
+        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
+        .connected { color: #10b981 !important; }
+        .error { color: #ef4444 !important; }
     </style>
 </head>
 <body>
-    <h2>Varun's Wireless Serial Monitor</h2>
-    <div id="status">Connecting...</div>
-    <div id="terminal"></div>
+    <h1>🐭 Wireless Control Center</h1>
+    <div id="status">Connecting to Bot...</div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Target Velocity</h3>
+            <div id="val-target" class="val">0.0</div>
+        </div>
+        <div class="card">
+            <h3>Yaw Angle</h3>
+            <div id="val-yaw" class="val">0.00°</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>PWM Power (Left / Right)</h3>
+            <div id="val-pwm" class="val dual">0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>Encoder Ticks (Left / Right)</h3>
+            <div id="val-enc" class="val dual">0 / 0</div>
+        </div>
+    </div>
 
     <script>
+        // Connect to the WebSocket port automatically
         var gateway = `ws://${window.location.hostname}:81/`;
         var websocket;
-        var terminal = document.getElementById('terminal');
         
         window.addEventListener('load', initWebSocket);
 
         function initWebSocket() {
             websocket = new WebSocket(gateway);
-            websocket.onopen = () => { document.getElementById('status').innerText = "Status: CONNECTED"; };
-            websocket.onclose = () => { 
-                document.getElementById('status').innerText = "Status: DISCONNECTED. Reconnecting..."; 
-                setTimeout(initWebSocket, 2000); 
-            };
-            websocket.onmessage = (event) => {
-                // Just dump the raw text into the div and auto-scroll to the bottom
-                terminal.innerHTML += event.data + "\n";
-                terminal.scrollTop = terminal.scrollHeight;
-            };
+            websocket.onopen = onOpen;
+            websocket.onclose = onClose;
+            websocket.onmessage = onMessage;
+        }
+
+        function onOpen(event) {
+            document.getElementById('status').innerText = "Status: Live Telemetry Connected";
+            document.getElementById('status').className = "connected";
+        }
+
+        function onClose(event) {
+            document.getElementById('status').innerText = "Status: Disconnected. Reconnecting...";
+            document.getElementById('status').className = "error";
+            setTimeout(initWebSocket, 2000); // Auto-reconnect
+        }
+
+        function onMessage(event) {
+            // Looking for: Target: 15.0 | Enc: 100 / 102 | PWM: 45 / 46 | Yaw: 0.05
+            let line = event.data;
+            if (!line.includes("Target:")) return;
+
+            try {
+                const parts = line.split('|');
+                document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
+                document.getElementById('val-enc').innerText = parts[1].split(':')[1].trim();
+                document.getElementById('val-pwm').innerText = parts[2].split(':')[1].trim();
+                document.getElementById('val-yaw').innerText = parts[3].split(':')[1].trim() + "°";
+            } catch (e) { }
         }
     </script>
 </body>
@@ -90,15 +123,6 @@ float targetYaw = 0.0;
 
 float vel_tolerance = 0.0; 
 float yaw_tolerance = 0.0; 
-
-float Kp_wall = 0.08; // Needs tuning
-float Kd_wall = 0.02; // Dampens the steering to prevent zig-zagging
-float prev_error_wall = 0.0;
-
-// Maze Geometry (Assume 180mm standard cell, adjust as needed)
-const int WALL_THRESHOLD = 120; // mm. If distance > this, wall is missing
-const int IDEAL_WALL_DIST = 55; // mm. Target distance to a single wall
-float baseTargetYaw = 0.0;      // 0 for North, 90 for East, etc.
 
 // ==========================================
 // SYSTEM VARIABLES
@@ -194,40 +218,8 @@ void loop() {
 
 void runControlLoop(float dt) {
   if (baseTargetVelocity < maxVelocity) {
-    baseTargetVelocity += 5; 
+    baseTargetVelocity += 1; 
   }
-
-  // --- NEW: WALL FOLLOWING SENSOR FUSION ---
-  DistanceData lidars = readLidars();
-  
-  bool hasLeft = lidars.left < WALL_THRESHOLD;
-  bool hasRight = lidars.right < WALL_THRESHOLD;
-  float error_wall = 0.0;
-
-  if (hasLeft && hasRight) {
-    // Center between both walls
-    error_wall = (float)(lidars.left - lidars.right);
-  } else if (hasLeft) {
-    // Follow left wall only
-    error_wall = (float)(lidars.left - IDEAL_WALL_DIST);
-  } else if (hasRight) {
-    // Follow right wall only
-    error_wall = (float)(IDEAL_WALL_DIST - lidars.right);
-  } else {
-    // No walls! Rely 100% on the gyro heading
-    error_wall = 0.0;
-  }
-
-  // Calculate Wall PD (Skipping Integral as it causes wall oscillation)
-  float deriv_wall = (error_wall - prev_error_wall) / dt;
-  float yaw_adjustment = (Kp_wall * error_wall) + (Kd_wall * deriv_wall);
-  prev_error_wall = error_wall;
-
-  // Constrain the adjustment so the bot doesn't swerve violently
-  yaw_adjustment = constrain(yaw_adjustment, -10.0, 10.0); 
-  
-  // Set the new dynamic target for the Gyro PID
-  targetYaw = baseTargetYaw + yaw_adjustment;
 
   noInterrupts();
   long currentLeftTicks = leftTicks;
@@ -283,17 +275,17 @@ void printTelemetry() {
   long currRight = rightTicks;
   interrupts();
 
-  DistanceData lidars = readLidars(); 
-
-  // Create your raw string however you want
-  char telemetryString[200];
+  // 1. Create the formatted string
+  char telemetryString[150];
   snprintf(telemetryString, sizeof(telemetryString), 
-           "Tar: %.1f | Lidar: %d,%d,%d | Enc: %ld,%ld | PWM: %d,%d | Yaw: %.2f", 
-           baseTargetVelocity, lidars.left, lidars.front, lidars.right, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle);
+           "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f", 
+           baseTargetVelocity, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle);
 
-  // Send to standard USB Serial (if plugged in)
-  Serial.println(telemetryString);
-  
-  // Send the EXACT SAME TEXT to the Wireless Web Terminal
+  // 2. Broadcast it instantly over WebSockets to any connected browser
   webSocket.broadcastTXT(telemetryString);
+}
+
+void waitForStartSignal() {
+  // Implementation kept same as before
+  delay(5000); 
 }
