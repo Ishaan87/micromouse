@@ -10,7 +10,7 @@
 // ==========================================
 // WIRELESS WEB SERVER SETTINGS
 // ==========================================
-const char *ssid = "Varun_Mouse";
+const char *ssid = "Jerry";
 const char *password = "mouse1234"; 
 
 WebServer server(80);                // Hosts the HTML Dashboard on port 80
@@ -53,12 +53,16 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div id="val-yaw" class="val">0.00°</div>
         </div>
         <div class="card" style="grid-column: 1 / -1;">
-            <h3>PWM Power (Left / Right)</h3>
-            <div id="val-pwm" class="val dual">0 / 0</div>
+            <h3>LiDAR (Left / Front / Right)</h3>
+            <div id="val-lidar" class="val dual">0 / 0 / 0</div>
         </div>
         <div class="card" style="grid-column: 1 / -1;">
             <h3>Encoder Ticks (Left / Right)</h3>
             <div id="val-enc" class="val dual">0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>PWM Power (Left / Right)</h3>
+            <div id="val-pwm" class="val dual">0 / 0</div>
         </div>
     </div>
 
@@ -88,16 +92,16 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
 
         function onMessage(event) {
-            // Looking for: Target: 15.0 | Enc: 100 / 102 | PWM: 45 / 46 | Yaw: 0.05
+            // Looking for: Target: 15.0 | Enc: 100 / 102 | PWM: 45 / 46 | Yaw: 0.05 | Lidar: 150 / 200 / 150
             let line = event.data;
             if (!line.includes("Target:")) return;
-
             try {
                 const parts = line.split('|');
                 document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
                 document.getElementById('val-enc').innerText = parts[1].split(':')[1].trim();
                 document.getElementById('val-pwm').innerText = parts[2].split(':')[1].trim();
                 document.getElementById('val-yaw').innerText = parts[3].split(':')[1].trim() + "°";
+                document.getElementById('val-lidar').innerText = parts[4].split(':')[1].trim() + " mm";
             } catch (e) { }
         }
     </script>
@@ -114,7 +118,7 @@ float Ki_vel = 0.0;
 float Kd_vel = 0.1;  
 
 float Kp_yaw = 0.75;  
-float Ki_yaw = 0.00; 
+float Ki_yaw = 0.0; 
 float Kd_yaw = 0.05; 
 
 float maxVelocity = 25.0;        
@@ -161,7 +165,6 @@ void setup() {
   server.on("/", []() {
     server.send(200, "text/html", index_html);
   });
-  
   server.begin();
   webSocket.begin();
   
@@ -184,7 +187,8 @@ void setup() {
   calibrateGyro(); 
   Serial.println("Gyro Calibration Successful.");
 
-  // waitForStartSignal(); // Uncomment when ready to use lidars for start
+  // waitForStartSignal();
+  // Uncomment when ready to use lidars for start
 
   resetEncoders();
   prevLeftTicks = 0;
@@ -205,7 +209,7 @@ void loop() {
   unsigned long currentTime = millis();
   
   if (currentTime - lastLoopTime >= LOOP_INTERVAL_MS) {
-    float dt = (currentTime - lastLoopTime) / 1000.0; 
+    float dt = (currentTime - lastLoopTime) / 1000.0;
     lastLoopTime = currentTime;
     runControlLoop(dt);
   }
@@ -236,7 +240,7 @@ void runControlLoop(float dt) {
   float yaw_rate = readGyroHeading(); 
   current_yaw_angle += yaw_rate * dt; 
   float error_yaw = targetYaw - current_yaw_angle;
-  
+
   if (abs(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
 
   integral_yaw += error_yaw * dt;
@@ -266,7 +270,7 @@ void runControlLoop(float dt) {
   prev_error_vel_L = error_vel_L;
   prev_error_vel_R = error_vel_R;
 
-  setMotorSpeeds(final_pwm_L, final_pwm_R);
+  applyMotorPWM(final_pwm_L, final_pwm_R);
 }
 
 void printTelemetry() {
@@ -275,14 +279,19 @@ void printTelemetry() {
   long currRight = rightTicks;
   interrupts();
 
-  // 1. Create the formatted string
-  char telemetryString[150];
+  // Fetch LiDAR distances
+  DistanceData lidars = readLidars();
+
+  // 1. Create the formatted string (Increased array size to fit the new data)
+  char telemetryString[200];
   snprintf(telemetryString, sizeof(telemetryString), 
-           "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f", 
-           baseTargetVelocity, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle);
+           "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d", 
+           baseTargetVelocity, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle, 
+           lidars.left, lidars.front, lidars.right);
 
   // 2. Broadcast it instantly over WebSockets to any connected browser
   webSocket.broadcastTXT(telemetryString);
+  Serial.println(telemetryString);
 }
 
 void waitForStartSignal() {

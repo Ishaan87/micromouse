@@ -13,98 +13,130 @@
 const char *ssid = "Jerry";
 const char *password = "mouse1234"; 
 
-WebServer server(80);                // Hosts the HTML Dashboard on port 80
-WebSocketsServer webSocket(81);      // Streams the live data on port 81
+WebServer server(80);                
+WebSocketsServer webSocket(81);
 
 // ==========================================
 // THE HTML DASHBOARD (Embedded)
 // ==========================================
-const char index_html[] PROGMEM = R"rawliteral(
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wireless Serial Monitor</title>
+    <title>Varun's Micromouse Dashboard</title>
     <style>
-        body { font-family: monospace; background: #000; color: #0f0; margin: 0; padding: 20px; }
-        h2 { color: #fff; margin-top: 0; }
-        #status { color: #ff0; margin-bottom: 10px; }
-        #terminal { 
-            background: #111; 
-            border: 1px solid #333; 
-            padding: 10px; 
-            height: 70vh; 
-            overflow-y: auto; 
-            white-space: pre-wrap; 
-            font-size: 14px;
-        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
+        h1 { color: #38bdf8; letter-spacing: 1px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
+        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
+        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
+        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
+        .val.dual { font-size: 2.5rem; color: #38bdf8; }
+        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
+        .connected { color: #10b981 !important; }
+        .error { color: #ef4444 !important; }
     </style>
 </head>
 <body>
-    <h2>Varun's Wireless Serial Monitor</h2>
-    <div id="status">Connecting...</div>
-    <div id="terminal"></div>
-
+    <h1>🐭 Wireless Control Center</h1>
+    <div id="status">Connecting to Bot...</div>
+    <div class="grid">
+        <div class="card">
+            <h3>Target Velocity</h3>
+            <div id="val-target" class="val">0.0</div>
+        </div>
+        <div class="card">
+            <h3>Yaw Angle</h3>
+            <div id="val-yaw" class="val">0.00°</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>LiDAR (Left / Front / Right)</h3>
+            <div id="val-lidar" class="val dual">0 / 0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>Encoder Ticks (Left / Right)</h3>
+            <div id="val-enc" class="val dual">0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>PWM Power (Left / Right)</h3>
+            <div id="val-pwm" class="val dual">0 / 0</div>
+        </div>
+    </div>
     <script>
         var gateway = `ws://${window.location.hostname}:81/`;
         var websocket;
-        var terminal = document.getElementById('terminal');
-        
         window.addEventListener('load', initWebSocket);
-
         function initWebSocket() {
             websocket = new WebSocket(gateway);
-            websocket.onopen = () => { document.getElementById('status').innerText = "Status: CONNECTED"; };
-            websocket.onclose = () => { 
-                document.getElementById('status').innerText = "Status: DISCONNECTED. Reconnecting..."; 
-                setTimeout(initWebSocket, 2000); 
-            };
-            websocket.onmessage = (event) => {
-                // Just dump the raw text into the div and auto-scroll to the bottom
-                terminal.innerHTML += event.data + "\n";
-                terminal.scrollTop = terminal.scrollHeight;
-            };
+            websocket.onopen = onOpen;
+            websocket.onclose = onClose;
+            websocket.onmessage = onMessage;
+        }
+        function onOpen(event) {
+            document.getElementById('status').innerText = "Status: Live Telemetry Connected";
+            document.getElementById('status').className = "connected";
+        }
+        function onClose(event) {
+            document.getElementById('status').innerText = "Status: Disconnected. Reconnecting...";
+            document.getElementById('status').className = "error";
+            setTimeout(initWebSocket, 2000); 
+        }
+        function onMessage(event) {
+            let line = event.data;
+            if (!line.includes("Target:")) return;
+            try {
+                const parts = line.split('|');
+                document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
+                document.getElementById('val-enc').innerText = parts[1].split(':')[1].trim();
+                document.getElementById('val-pwm').innerText = parts[2].split(':')[1].trim();
+                document.getElementById('val-yaw').innerText = parts[3].split(':')[1].trim() + "°";
+                document.getElementById('val-lidar').innerText = parts[4].split(':')[1].trim() + " mm";
+            } catch (e) { }
         }
     </script>
 </body>
 </html>
 )rawliteral";
 
-
 // ==========================================
 // TUNING PARAMETERS
 // ==========================================
+// LAYER 3: Velocity PID
 float Kp_vel = 7.0;  
 float Ki_vel = 0.0;  
 float Kd_vel = 0.1;  
 
+// LAYER 2: Gyro Yaw PID
+// Tip: Keep these relatively strong so it resists drifting
 float Kp_yaw = 0.75;  
 float Ki_yaw = 0.00; 
 float Kd_yaw = 0.05; 
 
-float maxVelocity = 25.0;        
+// LAYER 1: Wall Alignment PD
+float Kp_wall = 0.0;     
+float Kd_wall = 0.0;    
+const int WALL_THRESHOLD = 120;  
+const int IDEAL_WALL_DIST = 63;  
+const float MAX_YAW_OFFSET = 7.0; 
+
+// FADE-IN PARAMETERS
+const float FADE_START_VEL = 10.0; // Wall PID starts kicking in here
+const float FADE_END_VEL = 15.0;   // Wall PID is at 100% power here
+
+float maxVelocity = 10.0;        
 float baseTargetVelocity = 0.0;  
 float targetYaw = 0.0;           
 
 float vel_tolerance = 0.0; 
 float yaw_tolerance = 0.0; 
 
-float Kp_wall = 0.08; // Needs tuning
-float Kd_wall = 0.02; // Dampens the steering to prevent zig-zagging
-float prev_error_wall = 0.0;
-
-// Maze Geometry (Assume 180mm standard cell, adjust as needed)
-const int WALL_THRESHOLD = 120; // mm. If distance > this, wall is missing
-const int IDEAL_WALL_DIST = 55; // mm. Target distance to a single wall
-float baseTargetYaw = 0.0;      // 0 for North, 90 for East, etc.
-
 // ==========================================
 // SYSTEM VARIABLES
 // ==========================================
-const int LOOP_INTERVAL_MS = 20;  // 50Hz control loop
-const int PRINT_INTERVAL_MS = 100; // 10Hz telemetry print loop
+const int LOOP_INTERVAL_MS = 20;  
+const int PRINT_INTERVAL_MS = 100; 
 
 unsigned long lastLoopTime = 0;
 unsigned long lastPrintTime = 0;
@@ -115,35 +147,51 @@ float prev_error_vel_L = 0, prev_error_vel_R = 0;
 float integral_yaw = 0, prev_error_yaw = 0;
 float current_yaw_angle = 0.0;
 
+float prev_error_wall = 0;
+
 long prevLeftTicks = 0;
 long prevRightTicks = 0;
 
 int final_pwm_L = 0;
 int final_pwm_R = 0;
 
+// Thread-safe global variables for background LiDAR readings
+volatile int safe_lidar_front = 999;
+volatile int safe_lidar_left  = 999;
+volatile int safe_lidar_right = 999;
+
 void waitForStartSignal();
 void runControlLoop(float dt);
 void printTelemetry();
+
+// ==========================================
+// BACKGROUND TASK: LIDAR POLLING
+// ==========================================
+void lidarTask(void *pvParameters) {
+  for (;;) {
+    DistanceData temp = readLidars();
+    safe_lidar_front = temp.front;
+    safe_lidar_left  = temp.left;
+    safe_lidar_right = temp.right;
+    vTaskDelay(pdMS_TO_TICKS(5)); 
+  }
+}
 
 void setup() {
   Serial.begin(115200);
   delay(1000); 
 
-  // --- START WI-FI & WEB SERVER ---
   Serial.println("\nStarting Wi-Fi Access Point...");
   WiFi.softAP(ssid, password);
   
-  // When a browser asks for the root page ("/"), send the HTML string
   server.on("/", []() {
     server.send(200, "text/html", index_html);
   });
-  
   server.begin();
   webSocket.begin();
   
   Serial.print("Connect to Wi-Fi: "); Serial.println(ssid);
   Serial.print("Open browser to: http://"); Serial.println(WiFi.softAPIP());
-  // --------------------------------
 
   Serial.println("\n=================================");
   Serial.println("  MICROMOUSE SYSTEM STARTUP");
@@ -160,7 +208,7 @@ void setup() {
   calibrateGyro(); 
   Serial.println("Gyro Calibration Successful.");
 
-  // waitForStartSignal(); // Uncomment when ready to use lidars for start
+  xTaskCreate(lidarTask, "Lidar Background Thread", 4096, NULL, 1, NULL);
 
   resetEncoders();
   prevLeftTicks = 0;
@@ -168,20 +216,20 @@ void setup() {
   integral_vel_L = 0;
   integral_vel_R = 0;
   current_yaw_angle = 0.0; 
+  prev_error_wall = 0;
   
   lastLoopTime = millis();
   lastPrintTime = millis();
 }
 
 void loop() {
-  // CRITICAL: Keep the web server and websockets alive
   webSocket.loop();
   server.handleClient();
-
+  
   unsigned long currentTime = millis();
   
   if (currentTime - lastLoopTime >= LOOP_INTERVAL_MS) {
-    float dt = (currentTime - lastLoopTime) / 1000.0; 
+    float dt = (currentTime - lastLoopTime) / 1000.0;
     lastLoopTime = currentTime;
     runControlLoop(dt);
   }
@@ -194,41 +242,10 @@ void loop() {
 
 void runControlLoop(float dt) {
   if (baseTargetVelocity < maxVelocity) {
-    baseTargetVelocity += 5; 
+    baseTargetVelocity += 1; 
   }
 
-  // --- NEW: WALL FOLLOWING SENSOR FUSION ---
-  DistanceData lidars = readLidars();
-  
-  bool hasLeft = lidars.left < WALL_THRESHOLD;
-  bool hasRight = lidars.right < WALL_THRESHOLD;
-  float error_wall = 0.0;
-
-  if (hasLeft && hasRight) {
-    // Center between both walls
-    error_wall = (float)(lidars.left - lidars.right);
-  } else if (hasLeft) {
-    // Follow left wall only
-    error_wall = (float)(lidars.left - IDEAL_WALL_DIST);
-  } else if (hasRight) {
-    // Follow right wall only
-    error_wall = (float)(IDEAL_WALL_DIST - lidars.right);
-  } else {
-    // No walls! Rely 100% on the gyro heading
-    error_wall = 0.0;
-  }
-
-  // Calculate Wall PD (Skipping Integral as it causes wall oscillation)
-  float deriv_wall = (error_wall - prev_error_wall) / dt;
-  float yaw_adjustment = (Kp_wall * error_wall) + (Kd_wall * deriv_wall);
-  prev_error_wall = error_wall;
-
-  // Constrain the adjustment so the bot doesn't swerve violently
-  yaw_adjustment = constrain(yaw_adjustment, -10.0, 10.0); 
-  
-  // Set the new dynamic target for the Gyro PID
-  targetYaw = baseTargetYaw + yaw_adjustment;
-
+  // 1. Fetch fast encoder data
   noInterrupts();
   long currentLeftTicks = leftTicks;
   long currentRightTicks = rightTicks;
@@ -240,22 +257,85 @@ void runControlLoop(float dt) {
   prevLeftTicks = currentLeftTicks;
   prevRightTicks = currentRightTicks;
 
-  // Outer Loop (Yaw)
+  // ---------------------------------------------------------
+  // LAYER 1: WALL PID (Output -> Target Yaw Offset)
+  // ---------------------------------------------------------
+  int l_dist = safe_lidar_left;
+  int r_dist = safe_lidar_right;
+  
+  float error_wall = 0;
+  bool use_wall_pid = false;
+
+  bool left_wall_present = (l_dist < WALL_THRESHOLD);
+  bool right_wall_present = (r_dist < WALL_THRESHOLD);
+
+  if (left_wall_present && right_wall_present) {
+    error_wall = l_dist - r_dist; 
+    use_wall_pid = true;
+  } 
+  else if (left_wall_present) {
+    error_wall = l_dist - IDEAL_WALL_DIST;
+    use_wall_pid = true;
+  } 
+  else if (right_wall_present) {
+    error_wall = IDEAL_WALL_DIST - r_dist;
+    use_wall_pid = true;
+  }
+
+  float target_yaw_offset = 0;
+  
+  // Apply Wall PID only if moving fast enough, using the fade-in multiplier
+  if (use_wall_pid && baseTargetVelocity > FADE_START_VEL) { 
+    
+    // Calculate the multiplier (0.0 to 1.0)
+    float fade_multiplier = 1.0;
+    if (baseTargetVelocity < FADE_END_VEL) {
+      fade_multiplier = (baseTargetVelocity - FADE_START_VEL) / (FADE_END_VEL - FADE_START_VEL);
+    }
+
+    float deriv_wall = (error_wall - prev_error_wall) / dt;
+    float raw_yaw_offset = (Kp_wall * error_wall) + (Kd_wall * deriv_wall);
+    
+    // Multiply by our fade factor
+    target_yaw_offset = raw_yaw_offset * fade_multiplier;
+    
+    // Constrain the output to a safe turning angle
+    target_yaw_offset = constrain(target_yaw_offset, -MAX_YAW_OFFSET, MAX_YAW_OFFSET);
+    
+    prev_error_wall = error_wall;
+  } else {
+    prev_error_wall = 0; 
+  }
+
+  // ---------------------------------------------------------
+  // LAYER 2: GYRO YAW PID (Output -> Differential Velocity)
+  // ---------------------------------------------------------
+  // Multiply by -1.0 here IF your gyro is inverted. 
   float yaw_rate = readGyroHeading(); 
   current_yaw_angle += yaw_rate * dt; 
-  float error_yaw = targetYaw - current_yaw_angle;
+
+  float dynamic_target_yaw = targetYaw + target_yaw_offset;
   
+  float error_yaw = dynamic_target_yaw - current_yaw_angle;
   if (abs(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
 
   integral_yaw += error_yaw * dt;
   float deriv_yaw = (error_yaw - prev_error_yaw) / dt;
+  
   float heading_correction_vel = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
+  
+  // SAFETY CLAMP: Prevent correction from sending a wheel into reverse
+  float max_correction = max(0.0f, baseTargetVelocity - 1.0f);
+  heading_correction_vel = constrain(heading_correction_vel, -max_correction, max_correction);
+
   prev_error_yaw = error_yaw;
 
+  // ---------------------------------------------------------
+  // LAYER 3: VELOCITY PID (Output -> PWM)
+  // ---------------------------------------------------------
   float target_vel_L = baseTargetVelocity - heading_correction_vel;
   float target_vel_R = baseTargetVelocity + heading_correction_vel;
 
-  // Inner Loop (Velocity)
   float error_vel_L = target_vel_L - vel_L;
   float error_vel_R = target_vel_R - vel_R;
 
@@ -273,8 +353,8 @@ void runControlLoop(float dt) {
 
   prev_error_vel_L = error_vel_L;
   prev_error_vel_R = error_vel_R;
-
-  setMotorSpeeds(final_pwm_L, final_pwm_R);
+  
+  applyMotorPWM(final_pwm_L, final_pwm_R);
 }
 
 void printTelemetry() {
@@ -283,17 +363,20 @@ void printTelemetry() {
   long currRight = rightTicks;
   interrupts();
 
-  DistanceData lidars = readLidars(); 
+  int l_dist = safe_lidar_left;
+  int f_dist = safe_lidar_front;
+  int r_dist = safe_lidar_right;
 
-  // Create your raw string however you want
   char telemetryString[200];
   snprintf(telemetryString, sizeof(telemetryString), 
-           "Tar: %.1f | Lidar: %d,%d,%d | Enc: %ld,%ld | PWM: %d,%d | Yaw: %.2f", 
-           baseTargetVelocity, lidars.left, lidars.front, lidars.right, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle);
+           "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d", 
+           baseTargetVelocity, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle, 
+           l_dist, f_dist, r_dist);
 
-  // Send to standard USB Serial (if plugged in)
-  Serial.println(telemetryString);
-  
-  // Send the EXACT SAME TEXT to the Wireless Web Terminal
   webSocket.broadcastTXT(telemetryString);
+  Serial.println(telemetryString);
+}
+
+void waitForStartSignal() {
+  delay(5000); 
 }
