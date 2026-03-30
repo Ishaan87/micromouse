@@ -19,6 +19,9 @@ float rightMotorFilteredD = 0.0;
 unsigned long lastMotorPidMicros = 0;
 
 void applyMotorPWM(int leftPwm, int rightPwm) {
+  leftPwm *= LEFT_MOTOR_SIGN;
+  rightPwm *= RIGHT_MOTOR_SIGN;
+
   if (leftPwm >= 0) {
     digitalWrite(M1_DIR, HIGH);
     analogWrite(M1_PWM, constrain(leftPwm, 0, 255));
@@ -95,7 +98,8 @@ int runSingleMotorPID(float targetSpeed,
                  (Kd_motor_speed * filteredD);
 
   int nextPwm = currentPwm + (int)output;
-  int minPwm = max(35, (int)((MIN_WHEEL_SPEED_MMPS / MAX_WHEEL_SPEED_MMPS) * 255.0f));
+  int minPwm = max(
+    , (int)((MIN_WHEEL_SPEED_MMPS / MAX_WHEEL_SPEED_MMPS) * 255.0f));
 
   if (targetSpeed > 0) {
     nextPwm = constrain(nextPwm, minPwm, 255);

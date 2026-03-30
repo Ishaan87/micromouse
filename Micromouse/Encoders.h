@@ -22,13 +22,13 @@ unsigned long lastSpeedTime  = 0;
 // IRAM_ATTR — runs from RAM, not Flash
 // ==========================================
 void IRAM_ATTR countLeft() {
-  if (digitalRead(ENC_L_B) == HIGH) leftTicks++;
-  else                               leftTicks--;
+  if (digitalRead(ENC_L_B) == HIGH) leftTicks += LEFT_ENCODER_SIGN;
+  else                               leftTicks -= LEFT_ENCODER_SIGN;
 }
 
 void IRAM_ATTR countRight() {
-  if (digitalRead(ENC_R_B) == HIGH) rightTicks++;
-  else                               rightTicks--;
+  if (digitalRead(ENC_R_B) == HIGH) rightTicks += RIGHT_ENCODER_SIGN;
+  else                               rightTicks -= RIGHT_ENCODER_SIGN;
 }
 
 // ==========================================

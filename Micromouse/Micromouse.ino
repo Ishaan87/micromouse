@@ -2,12 +2,11 @@
 // MICROMOUSE - Main File
 // ==========================================
 // File structure:
-//   Config.h    - all pins and tuning constants
-//   Motors.h    - motor control functions
-//   Encoders.h  - encoder reading + speed calc
-//   Sensors.h   - lidar + IMU reading
-//   PID.h       - all movement + PID functions
-//   WebControl.h - WiFi + browser control interface
+//   Config.h   - pins and tuning constants
+//   Motors.h   - per-wheel motor speed control
+//   Encoders.h - encoder reading and speed calculation
+//   Sensors.h  - lidar and IMU reading
+//   PID.h      - wheel-speed PID helpers
 // ==========================================
 
 #include "Config.h"
@@ -15,7 +14,6 @@
 #include "Motors.h"
 #include "Sensors.h"
 #include "PID.h"
-#include "WebControl.h"
 
 void setup() {
   Serial.begin(115200);
@@ -29,12 +27,15 @@ void setup() {
   Serial.println("=== Micromouse Ready ===");
 
   resetEncoders();
-  lastTimeMicros = micros();
-  initWebControl();
+  startWheelSpeedControl();
+
+  // Example:
+  driveForwardSpeed(5.0);
 }
 
 void loop() {
-  handleWebControl();
+  // Example continuous drive:
+  driveForwardSpeed(5.0);
 
   static unsigned long lastStatusPrint = 0;
   if (millis() - lastStatusPrint >= 500) {
@@ -49,7 +50,7 @@ void loop() {
     Serial.print(" R:"); Serial.print(d.right);
     Serial.print(" | EncL:"); Serial.print(l);
     Serial.print(" EncR:"); Serial.print(r);
-    Serial.print(" | Cmd:"); Serial.print(commandToText(activeCommand == CMD_NONE ? pendingCommand : activeCommand));
-    Serial.print(" | Speed:"); Serial.println(manualSpeed);
+    Serial.print(" | WheelL:"); Serial.print(measuredLeftSpeedMMPS, 1);
+    Serial.print(" WheelR:"); Serial.println(measuredRightSpeedMMPS, 1);
   }
 }
