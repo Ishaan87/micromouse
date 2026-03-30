@@ -88,27 +88,27 @@ EncoderData readEncoders() {
   long deltaLeft         = currentLeft  - lastLeftTicks;
   long deltaRight        = currentRight - lastRightTicks;
 
-  // RPM
-  if (deltaTime > 0) {
-    data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-    data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-  } else {
-    data.leftSpeedRPM  = 0;
-    data.rightSpeedRPM = 0;
-  }
+  // // RPM
+  // if (deltaTime > 0) {
+  //   data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  //   data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  // } else {
+  //   data.leftSpeedRPM  = 0;
+  //   data.rightSpeedRPM = 0;
+  // }
 
-  // mm/s
-  if (deltaTime > 0) {
-    data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-    data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-  } else {
-    data.leftSpeedMMPS  = 0;
-    data.rightSpeedMMPS = 0;
-  }
+  // // mm/s
+  // if (deltaTime > 0) {
+  //   data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  //   data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  // } else {
+  //   data.leftSpeedMMPS  = 0;
+  //   data.rightSpeedMMPS = 0;
+  // }
 
-  // distance
-  data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
-  data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // // distance
+  // data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
 
   // raw ticks
   data.leftTicks  = currentLeft;

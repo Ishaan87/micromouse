@@ -68,25 +68,25 @@ void resetMotorSpeedPID() {
   applyMotorPWM(0, 0);
 }
 
-void setWheelSpeedTargetsMMPS(float leftTarget, float rightTarget) {
-  targetLeftSpeedMMPS = constrain(leftTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
-  targetRightSpeedMMPS = constrain(rightTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
-}
+// void setWheelSpeedTargetsMMPS(float leftTarget, float rightTarget) {
+//   targetLeftSpeedMMPS = constrain(leftTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
+//   targetRightSpeedMMPS = constrain(rightTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
+// }
 
-void moveForward(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(speedMMPS, speedMMPS);
-}
+// void moveForward(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(speedMMPS, speedMMPS);
+// }
 
-void moveBackward(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(-speedMMPS, -speedMMPS);
-}
+// void moveBackward(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(-speedMMPS, -speedMMPS);
+// }
 
-void stopMotors() {
-  resetMotorSpeedPID();
-}
+// void stopMotors() {
+//   resetMotorSpeedPID();
+// }
 
-void spinInPlace(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(speedMMPS, -speedMMPS);
-}
+// void spinInPlace(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(speedMMPS, -speedMMPS);
+//}
 
 #endif

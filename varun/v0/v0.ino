@@ -113,20 +113,24 @@ const char index_html[] PROGMEM = R"rawliteral(
 // ==========================================
 // TUNING PARAMETERS
 // ==========================================
-float Kp_vel = 7.0;  
-float Ki_vel = 0.0;  
-float Kd_vel = 0.1;  
+float Kp_vel_L = 1.0; 
+float Ki_vel_L = 0.0;  
+float Kd_vel_L = 0.1;
+
+float Kp_vel_R = 1.0; 
+float Ki_vel_R = 0.0;  
+float Kd_vel_R = 0.1; 
 
 float Kp_yaw = 0.75;  
 float Ki_yaw = 0.0; 
 float Kd_yaw = 0.05; 
-
-float maxVelocity = 25.0;        
-float baseTargetVelocity = 0.0;  
+        
+float baseTargetVelocity = 5.0;
+int basePWM = 75; 
 float targetYaw = 0.0;           
 
-float vel_tolerance = 0.0; 
-float yaw_tolerance = 0.0; 
+float vel_tolerance = 0.5; 
+float yaw_tolerance = 0.5; 
 
 // ==========================================
 // SYSTEM VARIABLES
@@ -221,13 +225,13 @@ void loop() {
 }
 
 void runControlLoop(float dt) {
-  if (baseTargetVelocity < maxVelocity) {
-    baseTargetVelocity += 1; 
-  }
+  // if (baseTargetVelocity < maxVelocity) {
+  //   baseTargetVelocity += 1; 
+  // }
 
   noInterrupts();
   long currentLeftTicks = leftTicks;
-  long currentRightTicks = rightTicks;
+  long currentRightTicks = -rightTicks;
   interrupts();
 
   float vel_L = (float)(currentLeftTicks - prevLeftTicks);
@@ -264,8 +268,8 @@ void runControlLoop(float dt) {
   float deriv_vel_L = (error_vel_L - prev_error_vel_L) / dt;
   float deriv_vel_R = (error_vel_R - prev_error_vel_R) / dt;
 
-  final_pwm_L = (int)((Kp_vel * error_vel_L) + (Ki_vel * integral_vel_L) + (Kd_vel * deriv_vel_L));
-  final_pwm_R = (int)((Kp_vel * error_vel_R) + (Ki_vel * integral_vel_R) + (Kd_vel * deriv_vel_R));
+  final_pwm_L = basePWM + (int)((Kp_vel_L * error_vel_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * deriv_vel_L));
+  final_pwm_R = basePWM + (int)((Kp_vel_R * error_vel_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * deriv_vel_R));
 
   prev_error_vel_L = error_vel_L;
   prev_error_vel_R = error_vel_R;

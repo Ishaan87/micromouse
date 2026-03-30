@@ -33,17 +33,17 @@ const int XSHUT_RIGHT = 3; // Right VL53L0X
 // ==========================================
 // ROBOT PHYSICAL CONSTANTS & LIMITS
 // ==========================================
-const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
-const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
+// const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
+// const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
 
-const float MAX_WHEEL_SPEED_MMPS = 500.0;
-const float MIN_WHEEL_SPEED_MMPS = 50.0;
-const float MOTOR_INTEGRAL_LIMIT = 200.0;
-const float MOTOR_PID_ALPHA = 0.2;
+// const float MAX_WHEEL_SPEED_MMPS = 500.0;
+// const float MIN_WHEEL_SPEED_MMPS = 50.0;
+// const float MOTOR_INTEGRAL_LIMIT = 200.0;
+// const float MOTOR_PID_ALPHA = 0.2;
 
-// Inner PID loop constants for Motors.h
-const float Kp_motor_speed = 1.0;
-const float Ki_motor_speed = 0.1;
-const float Kd_motor_speed = 0.05;
+// // Inner PID loop constants for Motors.h
+// const float Kp_motor_speed = 1.0;
+// const float Ki_motor_speed = 0.1;
+// const float Kd_motor_speed = 0.05;
 
 #endif
