@@ -41,10 +41,6 @@ void applyMotorPWM(int leftSpeed, int rightSpeed) {
   }
 }
 
-inline bool resolveDirection(bool isForwardCommand, bool isInverted) {
-  return isInverted ? !isForwardCommand : isForwardCommand;
-}
-
 void initMotors() {
   pinMode(M1_PWM, OUTPUT);
   pinMode(M1_DIR, OUTPUT);
@@ -72,25 +68,6 @@ void resetMotorSpeedPID() {
   applyMotorPWM(0, 0);
 }
 
-<<<<<<< HEAD
-  // Left Motor Logic
-  if (leftSpeed >= 0) {
-    digitalWrite(M1_DIR, resolveDirection(true, LEFT_MOTOR_INVERTED) ? HIGH : LOW);
-    analogWrite(M1_PWM, leftSpeed);
-  } else {
-    digitalWrite(M1_DIR, resolveDirection(false, LEFT_MOTOR_INVERTED) ? HIGH : LOW);
-    analogWrite(M1_PWM, -leftSpeed); // Make speed positive for PWM
-  }
-
-  // Right Motor Logic
-  if (rightSpeed >= 0) {
-    digitalWrite(M2_DIR, resolveDirection(true, RIGHT_MOTOR_INVERTED) ? HIGH : LOW);
-    analogWrite(M2_PWM, rightSpeed);
-  } else {
-    digitalWrite(M2_DIR, resolveDirection(false, RIGHT_MOTOR_INVERTED) ? HIGH : LOW);
-    analogWrite(M2_PWM, -rightSpeed); 
-  }
-=======
 void setWheelSpeedTargetsMMPS(float leftTarget, float rightTarget) {
   targetLeftSpeedMMPS = constrain(leftTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
   targetRightSpeedMMPS = constrain(rightTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
@@ -102,18 +79,14 @@ void moveForward(float speedMMPS) {
 
 void moveBackward(float speedMMPS) {
   setWheelSpeedTargetsMMPS(-speedMMPS, -speedMMPS);
->>>>>>> 0c4ae12c431527decefd24b16532107fbb1b1ae7
 }
 
 void stopMotors() {
   resetMotorSpeedPID();
 }
 
-<<<<<<< HEAD
-=======
 void spinInPlace(float speedMMPS) {
   setWheelSpeedTargetsMMPS(speedMMPS, -speedMMPS);
 }
 
->>>>>>> 0c4ae12c431527decefd24b16532107fbb1b1ae7
 #endif
