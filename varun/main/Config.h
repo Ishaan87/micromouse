@@ -10,27 +10,15 @@ const int M1_PWM = 0;  // Left Motor Speed (0-255)
 const int M1_DIR = 1;  // Left Motor Direction (HIGH/LOW)
 const int M2_PWM = 2;  // Right Motor Speed (0-255)
 const int M2_DIR = 10; // Right Motor Direction (HIGH/LOW)
-const bool LEFT_MOTOR_INVERTED = false;
-const bool RIGHT_MOTOR_INVERTED = true;
 
 // ==========================================
 // ENCODER PINS
 // ==========================================
 // Note: ESP32-C3 supports interrupts on all GPIO pins.
-<<<<<<< HEAD
-const int ENC_L_A = 3; // Left Encoder Phase A
-const int ENC_L_B = 4; // Left Encoder Phase B
-const int ENC_R_A = 5; // Right Encoder Phase A
-const int ENC_R_B = 6; // Right Encoder Phase B
-const bool LEFT_ENCODER_INVERTED = false;
-const bool RIGHT_ENCODER_INVERTED = false;
-const unsigned long ENCODER_GLITCH_FILTER_US = 80;
-=======
 const int ENC_L_A = 6; // Left Encoder Phase A
 const int ENC_L_B = 7; // Left Encoder Phase B
 const int ENC_R_A = 20; // Right Encoder Phase A
 const int ENC_R_B = 21; // Right Encoder Phase B
->>>>>>> 0c4ae12c431527decefd24b16532107fbb1b1ae7
 
 // ==========================================
 // I2C & LIDAR XSHUT PINS
@@ -45,24 +33,17 @@ const int XSHUT_RIGHT = 3; // Right VL53L0X
 // ==========================================
 // ROBOT PHYSICAL CONSTANTS & LIMITS
 // ==========================================
-const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
-const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
+// const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
+// const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
 
-const float MAX_WHEEL_SPEED_MMPS = 500.0;
-const float MIN_WHEEL_SPEED_MMPS = 50.0;
-const float MOTOR_INTEGRAL_LIMIT = 200.0;
-const float MOTOR_PID_ALPHA = 0.2;
+// const float MAX_WHEEL_SPEED_MMPS = 500.0;
+// const float MIN_WHEEL_SPEED_MMPS = 50.0;
+// const float MOTOR_INTEGRAL_LIMIT = 200.0;
+// const float MOTOR_PID_ALPHA = 0.2;
 
-// Inner PID loop constants for Motors.h
-const float Kp_motor_speed = 1.0;
-const float Ki_motor_speed = 0.1;
-const float Kd_motor_speed = 0.05;
-
-// ==========================================
-// WEB CONTROL
-// ==========================================
-constexpr char WIFI_AP_SSID[] = "Micromouse-Control";
-constexpr char WIFI_AP_PASSWORD[] = "micromouse123";
-constexpr int TELEMETRY_LOG_CAPACITY = 300;
+// // Inner PID loop constants for Motors.h
+// const float Kp_motor_speed = 1.0;
+// const float Ki_motor_speed = 0.1;
+// const float Kd_motor_speed = 0.05;
 
 #endif

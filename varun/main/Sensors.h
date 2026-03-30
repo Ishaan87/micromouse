@@ -175,10 +175,10 @@ float readAccelMagnitude() {
 // WALL DETECTION HELPERS
 // ==========================================
 // Note: WALL_THRESHOLD must be defined in your Config.h or main.ino
-extern const int WALL_THRESHOLD; 
+// extern const int WALL_THRESHOLD; 
 
-bool wallFront() { return readLidars().front < WALL_THRESHOLD; }
-bool wallLeft()  { return readLidars().left  < WALL_THRESHOLD; }
-bool wallRight() { return readLidars().right < WALL_THRESHOLD; }
+// bool wallFront() { return readLidars().front < WALL_THRESHOLD; }
+// bool wallLeft()  { return readLidars().left  < WALL_THRESHOLD; }
+// bool wallRight() { return readLidars().right < WALL_THRESHOLD; }
 
 #endif

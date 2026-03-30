@@ -6,29 +6,6 @@
 // Volatile because these change inside hardware interrupts
 volatile long leftTicks = 0;
 volatile long rightTicks = 0;
-volatile uint8_t leftEncoderState = 0;
-volatile uint8_t rightEncoderState = 0;
-volatile unsigned long lastLeftEncoderEdgeUs = 0;
-volatile unsigned long lastRightEncoderEdgeUs = 0;
-
-inline int8_t encoderTransitionDelta(uint8_t previousState, uint8_t currentState) {
-  static const int8_t transitionTable[16] = {
-    0, -1,  1,  0,
-    1,  0,  0, -1,
-   -1,  0,  0,  1,
-    0,  1, -1,  0
-  };
-
-  return transitionTable[(previousState << 2) | currentState];
-}
-
-inline uint8_t readLeftEncoderState() {
-  return (digitalRead(ENC_L_A) << 1) | digitalRead(ENC_L_B);
-}
-
-inline uint8_t readRightEncoderState() {
-  return (digitalRead(ENC_R_A) << 1) | digitalRead(ENC_R_B);
-}
 
 // Add these missing variables:
 long lastLeftTicks = 0;
@@ -37,39 +14,6 @@ unsigned long lastSpeedTime = 0;
 
 // IRAM_ATTR loads the interrupt into the ESP32's fast RAM for instant execution
 void IRAM_ATTR leftEncoderISR() {
-<<<<<<< HEAD
-  unsigned long now = micros();
-  if (now - lastLeftEncoderEdgeUs < ENCODER_GLITCH_FILTER_US) {
-    return;
-  }
-
-  uint8_t currentState = readLeftEncoderState();
-  int8_t delta = encoderTransitionDelta(leftEncoderState, currentState);
-  if (LEFT_ENCODER_INVERTED) {
-    delta = -delta;
-  }
-
-  leftTicks += delta;
-  leftEncoderState = currentState;
-  lastLeftEncoderEdgeUs = now;
-}
-
-void IRAM_ATTR rightEncoderISR() {
-  unsigned long now = micros();
-  if (now - lastRightEncoderEdgeUs < ENCODER_GLITCH_FILTER_US) {
-    return;
-  }
-
-  uint8_t currentState = readRightEncoderState();
-  int8_t delta = encoderTransitionDelta(rightEncoderState, currentState);
-  if (RIGHT_ENCODER_INVERTED) {
-    delta = -delta;
-  }
-
-  rightTicks += delta;
-  rightEncoderState = currentState;
-  lastRightEncoderEdgeUs = now;
-=======
   if (digitalRead(ENC_L_B) == HIGH) leftTicks++;
   else                               leftTicks--; 
 }
@@ -77,7 +21,6 @@ void IRAM_ATTR rightEncoderISR() {
 void IRAM_ATTR rightEncoderISR() {
   if (digitalRead(ENC_R_B) == HIGH) rightTicks++;
   else                               rightTicks--;
->>>>>>> 0c4ae12c431527decefd24b16532107fbb1b1ae7
 }
 
 void initEncoders() {
@@ -86,25 +29,12 @@ void initEncoders() {
   pinMode(ENC_R_A, INPUT_PULLUP);
   pinMode(ENC_R_B, INPUT_PULLUP);
 
-  leftEncoderState = readLeftEncoderState();
-  rightEncoderState = readRightEncoderState();
-
-  // Decode both channels to avoid missing edges and to reject invalid transitions.
-  attachInterrupt(digitalPinToInterrupt(ENC_L_A), leftEncoderISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENC_L_B), leftEncoderISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENC_R_A), rightEncoderISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENC_R_B), rightEncoderISR, CHANGE);
+  // Attach interrupts to trigger on the RISING edge of the encoder signal
+  attachInterrupt(digitalPinToInterrupt(ENC_L_A), leftEncoderISR, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_R_A), rightEncoderISR, RISING);
 }
 
 void resetEncoders() {
-<<<<<<< HEAD
-  leftTicks = 0;
-  rightTicks = 0;
-  leftEncoderState = readLeftEncoderState();
-  rightEncoderState = readRightEncoderState();
-  lastLeftEncoderEdgeUs = micros();
-  lastRightEncoderEdgeUs = micros();
-=======
   noInterrupts();
   leftTicks      = 0;
   rightTicks     = 0;
@@ -158,27 +88,27 @@ EncoderData readEncoders() {
   long deltaLeft         = currentLeft  - lastLeftTicks;
   long deltaRight        = currentRight - lastRightTicks;
 
-  // RPM
-  if (deltaTime > 0) {
-    data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-    data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-  } else {
-    data.leftSpeedRPM  = 0;
-    data.rightSpeedRPM = 0;
-  }
+  // // RPM
+  // if (deltaTime > 0) {
+  //   data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  //   data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  // } else {
+  //   data.leftSpeedRPM  = 0;
+  //   data.rightSpeedRPM = 0;
+  // }
 
-  // mm/s
-  if (deltaTime > 0) {
-    data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-    data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-  } else {
-    data.leftSpeedMMPS  = 0;
-    data.rightSpeedMMPS = 0;
-  }
+  // // mm/s
+  // if (deltaTime > 0) {
+  //   data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  //   data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  // } else {
+  //   data.leftSpeedMMPS  = 0;
+  //   data.rightSpeedMMPS = 0;
+  // }
 
-  // distance
-  data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
-  data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // // distance
+  // data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
 
   // raw ticks
   data.leftTicks  = currentLeft;
@@ -191,7 +121,6 @@ EncoderData readEncoders() {
   lastSpeedTime  = now;
 
   return data;
->>>>>>> 0c4ae12c431527decefd24b16532107fbb1b1ae7
 }
 
 #endif
