@@ -118,12 +118,13 @@ float Kp_vel_R = 1.0, Ki_vel_R = 0.0, Kd_vel_R = 0.1;
 float Kp_yaw = 0.75, Ki_yaw = 0.0, Kd_yaw = 0.05; 
 
 // 3. Outer Loop (Wall Centering PID)
-float Kp_wall = 0.05; // Needs tuning (usually a small number)
+float Kp_wall = 0.05; // Start small!
 float Ki_wall = 0.0;
-float Kd_wall = 0.01;
+float Kd_wall = 0.02;
         
 float baseTargetVelocity = 5.0;
-int basePWM = 75; 
+int basePWM = 50
+; 
 
 // Heading Management
 float baseTargetYaw = 0.0;     // The absolute heading we want (0 for straight)
@@ -132,6 +133,7 @@ float targetYaw = 0.0;         // baseTargetYaw + correction_angle
 
 float vel_tolerance = 0.5; 
 float yaw_tolerance = 0.5; 
+float wall_tolerance = 5.0;    // mm: Maximum allowable difference before correcting
 const int WALL_THRESHOLD = 150; // Max mm distance to consider a wall "valid"
 
 // ==========================================
@@ -248,24 +250,30 @@ void runWallPIDLoop(float dt) {
   // Only run Wall PID if BOTH walls are close enough to be considered a tunnel
   if (current_lidars.left < WALL_THRESHOLD && current_lidars.right < WALL_THRESHOLD) {
     
-    // Positive error means closer to right wall (left > right). 
-    // We want a positive correction angle to steer left.
+    // Positive error means closer to right wall. Demands positive correction (steer ACW/Left)
     float error_wall = (float)(current_lidars.left - current_lidars.right);
+    
+    // --- TOLERANCE / DEADBAND ---
+    // If the difference between lidars is less than the tolerance, we are centered enough.
+    if (abs(error_wall) <= wall_tolerance) {
+      error_wall = 0.0;
+      integral_wall = 0.0; // Stop integral windup while centered
+    }
     
     integral_wall += error_wall * dt;
     float deriv_wall = (error_wall - prev_error_wall) / dt;
     
     correction_angle = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
     
-    // Cap the correction angle so it doesn't try to turn 90 degrees just to center itself
-    correction_angle = constrain(correction_angle, -15.0, 15.0); 
+    // Cap the correction angle so it doesn't try to turn too sharply (±10 degrees max)
+    correction_angle = constrain(correction_angle, -10.0, 10.0); 
 
     prev_error_wall = error_wall;
   } else {
-    // If we lose a wall (e.g., passing a maze opening), stop correcting and hold base heading
+    // If we lose a wall, stop correcting and hold base heading
     correction_angle = 0.0;
-    integral_wall = 0;     // Reset integral to prevent windup when walls return
-    prev_error_wall = 0;
+    integral_wall = 0.0;     
+    prev_error_wall = 0.0;
   }
 
   // Feed this new corrected yaw to the Motor Control Loop
@@ -300,6 +308,7 @@ void runControlLoop(float dt) {
   float heading_correction_vel = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
   prev_error_yaw = error_yaw;
 
+  // If heading_correction_vel is positive (turning ACW/Left), Left motor slows, Right motor speeds up
   float target_vel_L = baseTargetVelocity - heading_correction_vel;
   float target_vel_R = baseTargetVelocity + heading_correction_vel;
 
