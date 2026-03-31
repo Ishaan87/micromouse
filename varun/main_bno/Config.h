@@ -26,8 +26,8 @@ const int ENC_R_B = 21; // Right Encoder Phase B
 const int I2C_SDA = 8; // Your MPU6050 & Lidar SDA pin
 const int I2C_SCL = 9; // Your MPU6050 & Lidar SCL pin
 
-const int XSHUT_FRONT = 4; // Front VL53L0X
-const int XSHUT_LEFT  = 5; // Left VL53L0X
+const int XSHUT_FRONT = 5; // Front VL53L0X
+const int XSHUT_LEFT  = 4; // Left VL53L0X
 const int XSHUT_RIGHT = 3; // Right VL53L0X
 
 // ==========================================

@@ -115,7 +115,7 @@ void calibrateGyro() {
 // INIT ALL SENSORS
 // ==========================================
 void initSensors() {
-  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.begin(I2C_SCL, I2C_SDA);
   initIMU();
   initLidars();
 }
@@ -142,8 +142,8 @@ DistanceData readLidars() {
 // ==========================================
 // READ GYRO HEADING
 // - Returns Z-axis angular velocity in
-//   degrees/sec. Still available for the
-//   yaw rate derivative term if needed.
+//   degrees/sec. Available for the yaw rate
+//   derivative term if needed.
 // ==========================================
 float readGyroHeading() {
   imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
@@ -152,17 +152,10 @@ float readGyroHeading() {
 }
 
 // ==========================================
-// READ ABSOLUTE YAW FROM QUATERNION
-// - Returns absolute yaw in degrees (-180 to
-//   +180). Drift-free: BNO055 fuses accel +
-//   gyro + mag internally.
-// - main.ino uses this directly instead of
-//   integrating gyro.z() * dt over time.
-// - On startup the robot's forward direction
-//   becomes yaw = 0 after resetYaw() is called.
+// ABSOLUTE YAW — INTERNAL HELPERS
 // ==========================================
-static float yaw_offset = 0.0;
 
+// Converts current quaternion to raw yaw in degrees (-180..+180)
 float _rawYawDegrees() {
   imu::Quaternion q = bno.getQuat();
   float yaw = atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
@@ -170,20 +163,37 @@ float _rawYawDegrees() {
   return yaw * 57.2958; // radians → degrees
 }
 
-// Call once after calibration to zero the heading
+// ==========================================
+// UNWRAPPED CONTINUOUS YAW
+// - Tracks cumulative rotation with no ±180
+//   wraparound. Grows -inf to +inf.
+// - Call resetYaw() once after calibration
+//   to zero the heading.
+// - Call readYawDegrees() every control loop
+//   iteration — delta is computed each call
+//   so don't skip calls or the delta will
+//   be large and may misdetect a wraparound.
+// ==========================================
+static float last_raw_yaw  = 0.0;
+static float yaw_unwrapped = 0.0;
+
 void resetYaw() {
-  yaw_offset = _rawYawDegrees();
+  last_raw_yaw  = _rawYawDegrees();
+  yaw_unwrapped = 0.0;
 }
 
-// Returns heading relative to the direction the robot faced at resetYaw()
 float readYawDegrees() {
-  float yaw = _rawYawDegrees() - yaw_offset;
+  float raw = _rawYawDegrees();
 
-  // Wrap to -180..+180
-  if (yaw >  180.0) yaw -= 360.0;
-  if (yaw < -180.0) yaw += 360.0;
+  // Take the shortest-path delta to handle the -180/+180 crossover
+  float delta = raw - last_raw_yaw;
+  if (delta >  180.0) delta -= 360.0;
+  if (delta < -180.0) delta += 360.0;
 
-  return yaw;
+  yaw_unwrapped += delta;
+  last_raw_yaw   = raw;
+
+  return yaw_unwrapped;
 }
 
 // ==========================================
