@@ -1,11 +1,111 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <WebSocketsServer.h>
 #include "Config.h"
 #include "Motors.h"
 #include "Encoders.h"
 #include "Sensors.h"
 #include "EKF.h"
-#include "CellTracker.h"
-#include "WallMap.h"
+
+// ==========================================
+// WIRELESS WEB SERVER SETTINGS
+// ==========================================
+const char *ssid = "Jerry";
+const char *password = "mouse1234";
+
+WebServer server(80);
+WebSocketsServer webSocket(81);
+
+// ==========================================
+// THE HTML DASHBOARD (Embedded)
+// ==========================================
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Varun's Micromouse Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
+        h1 { color: #38bdf8; letter-spacing: 1px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
+        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
+        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
+        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
+        .val.dual { font-size: 2.5rem; color: #38bdf8; }
+        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
+        .connected { color: #10b981 !important; }
+        .error { color: #ef4444 !important; }
+    </style>
+</head>
+<body>
+    <h1>Wireless Control Center</h1>
+    <div id="status">Connecting to Bot...</div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Target Velocity</h3>
+            <div id="val-target" class="val">0.0</div>
+        </div>
+        <div class="card">
+            <h3>Current Yaw</h3>
+            <div id="val-yaw" class="val">0.00°</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>LiDAR (Left / Front / Right)</h3>
+            <div id="val-lidar" class="val dual">0 / 0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>Encoder Ticks (Left / Right)</h3>
+            <div id="val-enc" class="val dual">0 / 0</div>
+        </div>
+        <div class="card" style="grid-column: 1 / -1;">
+            <h3>PWM Power (Left / Right)</h3>
+            <div id="val-pwm" class="val dual">0 / 0</div>
+        </div>
+    </div>
+
+    <script>
+        var gateway = `ws://${window.location.hostname}:81/`;
+        var websocket;
+        
+        window.addEventListener('load', initWebSocket);
+        function initWebSocket() {
+            websocket = new WebSocket(gateway);
+            websocket.onopen = onOpen;
+            websocket.onclose = onClose;
+            websocket.onmessage = onMessage;
+        }
+
+        function onOpen(event) {
+            document.getElementById('status').innerText = "Status: Live Telemetry Connected";
+            document.getElementById('status').className = "connected";
+        }
+
+        function onClose(event) {
+            document.getElementById('status').innerText = "Status: Disconnected. Reconnecting...";
+            document.getElementById('status').className = "error";
+            setTimeout(initWebSocket, 2000);
+        }
+
+        function onMessage(event) {
+            let line = event.data;
+            if (!line.includes("Target:")) return;
+            try {
+                const parts = line.split('|');
+                document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
+                document.getElementById('val-enc').innerText = parts[1].split(':')[1].trim();
+                document.getElementById('val-pwm').innerText = parts[2].split(':')[1].trim();
+                document.getElementById('val-yaw').innerText = parts[3].split(':')[1].trim() + "°";
+                document.getElementById('val-lidar').innerText = parts[5].split(':')[1].trim() + " mm";
+            } catch (e) { }
+        }
+    </script>
+</body>
+</html>
+)rawliteral";
 
 // ==========================================
 // TUNING PARAMETERS
@@ -54,11 +154,11 @@ const unsigned long STOP_DETECT_MS = 1000;
 // ==========================================
 // SYSTEM VARIABLES
 // ==========================================
-const int LOOP_INTERVAL_MS = 20;
+const int LOOP_INTERVAL_MS  = 20;
 const int LIDAR_INTERVAL_MS = 50;
 const int PRINT_INTERVAL_MS = 100;
 
-unsigned long lastLoopTime = 0;
+unsigned long lastLoopTime  = 0;
 unsigned long lastLidarTime = 0;
 unsigned long lastPrintTime = 0;
 
@@ -70,7 +170,7 @@ float current_yaw_angle = 0.0;
 
 float integral_wall = 0, prev_error_wall = 0;
 
-long prevLeftTicks = 0;
+long prevLeftTicks  = 0;
 long prevRightTicks = 0;
 
 int final_pwm_L = 0;
@@ -103,7 +203,7 @@ void resetDistanceReportState() {
 void maybeFinalizeDistance(long currentLeftTicks, long currentRightTicks) {
   if (finalDistancePrinted) return;
 
-  long deltaLeftTicks = currentLeftTicks - prevLeftTicks;
+  long deltaLeftTicks  = currentLeftTicks  - prevLeftTicks;
   long deltaRightTicks = currentRightTicks - prevRightTicks;
 
   if (!movementStarted) {
@@ -117,7 +217,8 @@ void maybeFinalizeDistance(long currentLeftTicks, long currentRightTicks) {
     return;
   }
 
-  if (currentLeftTicks == lastObservedLeftTicks && currentRightTicks == lastObservedRightTicks) {
+  if (currentLeftTicks == lastObservedLeftTicks &&
+      currentRightTicks == lastObservedRightTicks) {
     if (encoderStillStartMs == 0) {
       encoderStillStartMs = millis();
     } else if (millis() - encoderStillStartMs >= STOP_DETECT_MS) {
@@ -166,6 +267,17 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  Serial.println("\nStarting Wi-Fi Access Point...");
+  WiFi.softAP(ssid, password);
+  server.on("/", []() {
+    server.send(200, "text/html", index_html);
+  });
+  server.begin();
+  webSocket.begin();
+
+  Serial.print("Connect to Wi-Fi: "); Serial.println(ssid);
+  Serial.print("Open browser to: http://"); Serial.println(WiFi.softAPIP());
+
   Serial.println("\n=================================");
   Serial.println("  MICROMOUSE SYSTEM STARTUP");
   Serial.println("=================================");
@@ -186,27 +298,28 @@ void setup() {
 
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
   ekfInit(0.0f, 0.0f, 0.0f);
-  initCellTracker();
-  initWallMap();
   ekfTelemetry = ekfGetTelemetry();
 
   resetEncoders();
   resetDistanceReportState();
 
-  prevLeftTicks = 0;
+  prevLeftTicks  = 0;
   prevRightTicks = 0;
   integral_vel_L = 0;
   integral_vel_R = 0;
-  integral_yaw = 0;
-  integral_wall = 0;
+  integral_yaw   = 0;
+  integral_wall  = 0;
 
   unsigned long now = millis();
-  lastLoopTime = now;
+  lastLoopTime  = now;
   lastLidarTime = now;
   lastPrintTime = now;
 }
 
 void loop() {
+  webSocket.loop();
+  server.handleClient();
+
   unsigned long currentTime = millis();
 
   if (currentTime - lastLidarTime >= LIDAR_INTERVAL_MS) {
@@ -233,7 +346,7 @@ void loop() {
 void runWallPIDLoop(float dt) {
   current_lidars = readLidars();
 
-  bool hasLeft = current_lidars.left < WALL_THRESHOLD;
+  bool hasLeft  = current_lidars.left  < WALL_THRESHOLD;
   bool hasRight = current_lidars.right < WALL_THRESHOLD;
 
   float error_wall = 0.0f;
@@ -249,14 +362,14 @@ void runWallPIDLoop(float dt) {
 
   } else {
     correction_angle = 0.0f;
-    integral_wall = 0.0f;
-    prev_error_wall = 0.0f;
+    integral_wall    = 0.0f;
+    prev_error_wall  = 0.0f;
     targetYaw = baseTargetYaw;
     return;
   }
 
   if (abs(error_wall) <= wall_tolerance) {
-    error_wall = 0.0f;
+    error_wall    = 0.0f;
     integral_wall = 0.0f;
   }
 
@@ -287,11 +400,11 @@ float frontBrakeScale() {
 // ==========================================
 void runControlLoop(float dt) {
   noInterrupts();
-  long currentLeftTicks = leftTicks;
+  long currentLeftTicks  = leftTicks;
   long currentRightTicks = -rightTicks;
   interrupts();
 
-  long deltaLeftTicks = currentLeftTicks - prevLeftTicks;
+  long deltaLeftTicks  = currentLeftTicks  - prevLeftTicks;
   long deltaRightTicks = currentRightTicks - prevRightTicks;
 
   float vel_L = (float)deltaLeftTicks;
@@ -303,19 +416,6 @@ void runControlLoop(float dt) {
   ekfPredict(deltaLeftTicks, deltaRightTicks);
   ekfUpdateYawDeg(current_yaw_angle);
   ekfTelemetry = ekfGetTelemetry();
-
-  bool newCell = updateCellTracker();
-  if (newCell) {
-    // Robot just entered a new cell — snapshot walls immediately
-    recordWalls(
-      ctGetRow(),
-      ctGetCol(),
-      ctGetHeading(),
-      current_lidars        // already populated by runWallPIDLoop
-    );
-    printCellWalls(ctGetRow(), ctGetCol());   // serial debug
-    printCellState();                         // serial debug
-  }
 
   // Stop/final-report logic
   maybeFinalizeDistance(currentLeftTicks, currentRightTicks);
@@ -332,7 +432,9 @@ void runControlLoop(float dt) {
   float deriv_yaw = (error_yaw - prev_error_yaw) / dt;
 
   float heading_correction_vel =
-    (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
+    (Kp_yaw * error_yaw) +
+    (Ki_yaw * integral_yaw) +
+    (Kd_yaw * deriv_yaw);
 
   prev_error_yaw = error_yaw;
 
@@ -347,7 +449,7 @@ void runControlLoop(float dt) {
     prev_error_vel_L = 0;
     prev_error_vel_R = 0;
 
-    prevLeftTicks = currentLeftTicks;
+    prevLeftTicks  = currentLeftTicks;
     prevRightTicks = currentRightTicks;
     return;
   }
@@ -376,16 +478,24 @@ void runControlLoop(float dt) {
   float deriv_vel_L = (error_vel_L - prev_error_vel_L) / dt;
   float deriv_vel_R = (error_vel_R - prev_error_vel_R) / dt;
 
-  final_pwm_L = effectiveBasePWM + (int)((Kp_vel_L * error_vel_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * deriv_vel_L));
+  final_pwm_L = effectiveBasePWM + (int)(
+    (Kp_vel_L * error_vel_L) +
+    (Ki_vel_L * integral_vel_L) +
+    (Kd_vel_L * deriv_vel_L)
+  );
 
-  final_pwm_R = effectiveBasePWM + (int)((Kp_vel_R * error_vel_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * deriv_vel_R));
+  final_pwm_R = effectiveBasePWM + (int)(
+    (Kp_vel_R * error_vel_R) +
+    (Ki_vel_R * integral_vel_R) +
+    (Kd_vel_R * deriv_vel_R)
+  );
 
   prev_error_vel_L = error_vel_L;
   prev_error_vel_R = error_vel_R;
 
   applyMotorPWM(final_pwm_L, final_pwm_R);
 
-  prevLeftTicks = currentLeftTicks;
+  prevLeftTicks  = currentLeftTicks;
   prevRightTicks = currentRightTicks;
 }
 
@@ -394,7 +504,7 @@ void runControlLoop(float dt) {
 // ==========================================
 void printTelemetry() {
   noInterrupts();
-  long currLeft = leftTicks;
+  long currLeft  = leftTicks;
   long currRight = rightTicks;
   interrupts();
 
@@ -402,7 +512,7 @@ void printTelemetry() {
   snprintf(
     telemetryString,
     sizeof(telemetryString),
-    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | EKF: %.1f, %.1f, %.2f | Cell: (%d,%d) %s | Lidar: %d / %d / %d",
+    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | EKF: %.1f, %.1f, %.2f | Lidar: %d / %d / %d",
     baseTargetVelocity,
     currLeft,
     currRight,
@@ -412,11 +522,11 @@ void printTelemetry() {
     ekfTelemetry.x_mm,
     ekfTelemetry.y_mm,
     ekfTelemetry.theta_deg,
-    ctGetRow(), ctGetCol(), headingName(ctGetHeading()),   // ← new
     current_lidars.left,
     current_lidars.front,
     current_lidars.right
   );
 
+  webSocket.broadcastTXT(telemetryString);
   Serial.println(telemetryString);
 }

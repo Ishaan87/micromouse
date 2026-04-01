@@ -30,11 +30,23 @@ const int XSHUT_FRONT = 5; // Front VL53L0X
 const int XSHUT_LEFT  = 4; // Left VL53L0X
 const int XSHUT_RIGHT = 3; // Right VL53L0X
 
+
+const int WALL_THRESHOLD = 150;
+
+
+
 // ==========================================
 // ROBOT PHYSICAL CONSTANTS & LIMITS
 // ==========================================
-// const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
-// const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
+const float TICKS_PER_REV = 360.0;          // UPDATE THIS: Ticks for 1 full wheel rotation
+const float WHEEL_CIRCUMFERENCE_MM = 100.0; // UPDATE THIS: Pi * Wheel Diameter in mm
+
+const float CELL_SIZE_MM = 180.0;           // Standard Micromouse cell size
+
+// The Magic Number: How many ticks to move exactly one cell
+const long TICKS_PER_CELL = (long)((CELL_SIZE_MM / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV);
+
+
 
 // const float MAX_WHEEL_SPEED_MMPS = 500.0;
 // const float MIN_WHEEL_SPEED_MMPS = 50.0;

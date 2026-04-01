@@ -1,111 +1,9 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <WebSocketsServer.h>
 #include "Config.h"
 #include "Motors.h"
 #include "Encoders.h"
 #include "Sensors.h"
-
-// ==========================================
-// WIRELESS WEB SERVER SETTINGS
-// ==========================================
-const char *ssid = "Jerry";
-const char *password = "mouse1234"; 
-
-WebServer server(80);                
-WebSocketsServer webSocket(81);
-
-// ==========================================
-// THE HTML DASHBOARD (Embedded)
-// ==========================================
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Varun's Micromouse Dashboard</title>
-    <style>
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
-        h1 { color: #38bdf8; letter-spacing: 1px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
-        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
-        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
-        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
-        .val.dual { font-size: 2.5rem; color: #38bdf8; }
-        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
-        .connected { color: #10b981 !important; }
-        .error { color: #ef4444 !important; }
-    </style>
-</head>
-<body>
-    <h1>🐭 Wireless Control Center</h1>
-    <div id="status">Connecting to Bot...</div>
-
-    <div class="grid">
-        <div class="card">
-            <h3>Target Velocity</h3>
-            <div id="val-target" class="val">0.0</div>
-        </div>
-        <div class="card">
-            <h3>Current Yaw</h3>
-            <div id="val-yaw" class="val">0.00°</div>
-        </div>
-        <div class="card" style="grid-column: 1 / -1;">
-            <h3>LiDAR (Left / Front / Right)</h3>
-            <div id="val-lidar" class="val dual">0 / 0 / 0</div>
-        </div>
-        <div class="card" style="grid-column: 1 / -1;">
-            <h3>Encoder Ticks (Left / Right)</h3>
-            <div id="val-enc" class="val dual">0 / 0</div>
-        </div>
-        <div class="card" style="grid-column: 1 / -1;">
-            <h3>PWM Power (Left / Right)</h3>
-            <div id="val-pwm" class="val dual">0 / 0</div>
-        </div>
-    </div>
-
-    <script>
-        var gateway = `ws://${window.location.hostname}:81/`;
-        var websocket;
-        
-        window.addEventListener('load', initWebSocket);
-        function initWebSocket() {
-            websocket = new WebSocket(gateway);
-            websocket.onopen = onOpen;
-            websocket.onclose = onClose;
-            websocket.onmessage = onMessage;
-        }
-
-        function onOpen(event) {
-            document.getElementById('status').innerText = "Status: Live Telemetry Connected";
-            document.getElementById('status').className = "connected";
-        }
-
-        function onClose(event) {
-            document.getElementById('status').innerText = "Status: Disconnected. Reconnecting...";
-            document.getElementById('status').className = "error";
-            setTimeout(initWebSocket, 2000); 
-        }
-
-        function onMessage(event) {
-            let line = event.data;
-            if (!line.includes("Target:")) return;
-            try {
-                const parts = line.split('|');
-                document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
-                document.getElementById('val-enc').innerText = parts[1].split(':')[1].trim();
-                document.getElementById('val-pwm').innerText = parts[2].split(':')[1].trim();
-                document.getElementById('val-yaw').innerText = parts[3].split(':')[1].trim() + "°";
-                document.getElementById('val-lidar').innerText = parts[4].split(':')[1].trim() + " mm";
-            } catch (e) { }
-        }
-    </script>
-</body>
-</html>
-)rawliteral";
-
+#include "Maze.h"
 
 // ==========================================
 // TUNING PARAMETERS
@@ -133,7 +31,6 @@ float targetYaw = 0.0;         // baseTargetYaw + correction_angle
 float vel_tolerance = 0.5; 
 float yaw_tolerance = 0.5; 
 float wall_tolerance = 5.0;    // mm
-const int WALL_THRESHOLD = 150;
 
 // ==========================================
 // SYSTEM VARIABLES
@@ -165,24 +62,29 @@ int final_pwm_R = 0;
 
 DistanceData current_lidars;
 
+// ==========================================
+// STATE MACHINE & NAVIGATION
+// ==========================================
+enum RobotState {
+  DECIDING,         // Stopped, running Flood Fill, updating map
+  DRIVING_STRAIGHT, // Moving 180mm forward
+  TURNING           // Executing a 90 or 180 degree pivot
+};
+
+RobotState currentState = DECIDING;
+
+// Variables to track distance inside the current cell
+long cellStartLeftTicks = 0;
+long cellStartRightTicks = 0;
+
 void runControlLoop(float dt);
 void runWallPIDLoop(float dt);
 void printTelemetry();
+void printCellData(int x, int y);
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-
-  Serial.println("\nStarting Wi-Fi Access Point...");
-  WiFi.softAP(ssid, password);
-  server.on("/", []() {
-    server.send(200, "text/html", index_html);
-  });
-  server.begin();
-  webSocket.begin();
-  
-  Serial.print("Connect to Wi-Fi: "); Serial.println(ssid);
-  Serial.print("Open browser to: http://"); Serial.println(WiFi.softAPIP());
 
   Serial.println("\n=================================");
   Serial.println("  MICROMOUSE SYSTEM STARTUP");
@@ -218,9 +120,6 @@ void setup() {
 }
 
 void loop() {
-  webSocket.loop();
-  server.handleClient();
-  
   unsigned long currentTime = millis();
   
   // 1. Medium Loop: LiDAR & Wall PID
@@ -238,10 +137,10 @@ void loop() {
   }
 
   // 3. Slow Loop: Telemetry
-  if (currentTime - lastPrintTime >= PRINT_INTERVAL_MS) {
-    lastPrintTime = currentTime;
-    printTelemetry();
-  }
+  // if (currentTime - lastPrintTime >= PRINT_INTERVAL_MS) {
+  //   lastPrintTime = currentTime;
+  //   printTelemetry();
+  // }
 }
 
 // ==========================================
@@ -291,14 +190,56 @@ void runControlLoop(float dt) {
   prevLeftTicks  = currentLeftTicks;
   prevRightTicks = currentRightTicks;
 
-  // --- REPLACED: was current_yaw_angle += readGyroHeading() * dt ---
   // Now reads absolute, drift-free yaw directly from the BNO055 quaternion.
-  // No integration error accumulates over time.
   current_yaw_angle = readYawDegrees();
 
-  // Middle Loop (Yaw PID)
+  // =====================================================
+  // STATE MACHINE LOGIC
+  // =====================================================
+  if (currentState == DRIVING_STRAIGHT) {
+    // 1. Calculate how far we've moved since entering this cell
+    long ticksMovedL = abs(currentLeftTicks - cellStartLeftTicks);
+    long ticksMovedR = abs(currentRightTicks - cellStartRightTicks);
+    long avgTicksMoved = (ticksMovedL + ticksMovedR) / 2;
+
+    // 2. Check if we have reached the center of the next cell (180mm)
+    if (avgTicksMoved >= TICKS_PER_CELL) {
+      baseTargetVelocity = 0.0;   // Slam the brakes
+      currentState = DECIDING;    // Change state to trigger the algorithm
+      
+      // Update global position (from Maze.h)
+      moveToNextCell(); 
+      updateMap(current_lidars, current_yaw_angle);
+      printCellData(currentX, currentY);
+
+    } else {
+      baseTargetVelocity = 5.0;   // Keep driving
+    }
+  } 
+  else if (currentState == DECIDING) {
+    baseTargetVelocity = 0.0; // Ensure we stay completely still
+    
+    // NOTE: This is where we will eventually call the Flood Fill algorithm
+    // For now, let's just wait 1 second and then simulate deciding to go straight again
+    static unsigned long decideTimer = 0;
+    if (decideTimer == 0) decideTimer = millis();
+    
+    if (millis() - decideTimer > 1000) {
+      // "Decided" to go straight! Reset the counters and go.
+      cellStartLeftTicks = currentLeftTicks;
+      cellStartRightTicks = currentRightTicks;
+      currentState = DRIVING_STRAIGHT;
+      decideTimer = 0;
+    }
+  }
+  else if (currentState == TURNING) {
+    baseTargetVelocity = 0.0; // No forward movement while pivoting
+  }
+
+  // =====================================================
+  // YAW & VELOCITY PIDs (Middle & Inner Loops)
+  // =====================================================
   float error_yaw = targetYaw - current_yaw_angle;
-  
   if (abs(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
 
   integral_yaw += error_yaw * dt;
@@ -307,7 +248,7 @@ void runControlLoop(float dt) {
   float heading_correction_vel = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
   prev_error_yaw = error_yaw;
 
-  // Positive correction = turning ACW/Left → left slows, right speeds up
+  // Apply heading correction to our velocity targets
   float target_vel_L = baseTargetVelocity - heading_correction_vel;
   float target_vel_R = baseTargetVelocity + heading_correction_vel;
 
@@ -334,6 +275,37 @@ void runControlLoop(float dt) {
 }
 
 // ==========================================
+// DEBUG: PRINT CELL DATA
+// ==========================================
+void printCellData(int x, int y) {
+  byte cell = maze[x][y];
+  
+  Serial.print("Map Cell ("); 
+  Serial.print(x); 
+  Serial.print(", "); 
+  Serial.print(y); 
+  Serial.print(") | Status: ");
+
+  // Use Bitwise AND (&) to check if specific bits are turned on
+  if (cell & VISITED) {
+    Serial.print("VISITED | Walls: ");
+  } else {
+    Serial.print("UNKNOWN | Walls: ");
+  }
+
+  // Check each wall bit and print its letter
+  if (cell & WALL_NORTH) Serial.print("N ");
+  if (cell & WALL_EAST)  Serial.print("E ");
+  if (cell & WALL_SOUTH) Serial.print("S ");
+  if (cell & WALL_WEST)  Serial.print("W ");
+  
+  // If no walls are detected yet
+  if ((cell & 15) == 0) Serial.print("None"); // 15 is the sum of 1+2+4+8
+
+  Serial.println(); // Print a new line
+}
+
+// ==========================================
 // TELEMETRY
 // ==========================================
 void printTelemetry() {
@@ -348,6 +320,5 @@ void printTelemetry() {
            baseTargetVelocity, currLeft, currRight, final_pwm_L, final_pwm_R, current_yaw_angle, 
            current_lidars.left, current_lidars.front, current_lidars.right);
            
-  webSocket.broadcastTXT(telemetryString);
   Serial.println(telemetryString);
 }
