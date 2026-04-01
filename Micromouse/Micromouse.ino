@@ -6,8 +6,8 @@
 #include "EKF.h"
 #include "CellTracker.h"
 #include "WallMap.h"
-#include "Turns.h"           // ← NEW (must come before WallFollower.h)
-#include "WallFollower.h"    // ← NEW
+#include "Turns.h"           
+#include "WallFollower.h"    
 
 // ==========================================
 // TUNING PARAMETERS
@@ -17,14 +17,20 @@ float Kp_vel_L = 1.0, Ki_vel_L = 0.0, Kd_vel_L = 0.1;
 float Kp_vel_R = 1.0, Ki_vel_R = 0.0, Kd_vel_R = 0.1;
 
 // 2. Middle Loop (Yaw PID)
-float Kp_yaw = 1.0, Ki_yaw = 0.0, Kd_yaw = 0.05;
+float Kp_yaw = 0.6, Ki_yaw = 0.0, Kd_yaw = 0.06; 
 
-// 3. Outer Loop (Wall Centering PID)
-float Kp_wall = 0.25;
+// 3. Outer Loop (Wall Centering PID) - GAIN SCHEDULING
+float Kp_tunnel = 0.12; 
+float Kd_tunnel = 0.08;
+float Kp_single = 0.06; 
+float Kd_single = 0.12; 
+
+// Active constants
+float Kp_wall = Kp_tunnel;
+float Kd_wall = Kd_tunnel;
 float Ki_wall = 0.0;
-float Kd_wall = 0.05;
 
-float baseTargetVelocity = 15.0;
+float baseTargetVelocity = 15.0; // Ticks per loop
 int basePWM = 50;
 
 // Heading Management
@@ -34,12 +40,13 @@ float targetYaw = 0.0;
 
 float vel_tolerance = 0.5;
 float yaw_tolerance = 0.5;
-float wall_tolerance = 5.0;
-const int WALL_THRESHOLD = 110;
+float wall_tolerance = 10.0; 
 
-const float SINGLE_WALL_TARGET_MM = 63.0;
-const int FRONT_STOP_MM = 110;
-const int FRONT_HALT_MM = 65;
+// --- 155MM CELL SIZE CORRECTIONS ---
+const int WALL_THRESHOLD = 110;  
+const float SINGLE_WALL_TARGET_MM = 63.0; 
+const int FRONT_STOP_MM = 110;   
+const int FRONT_HALT_MM = 65;    
 
 // ==========================================
 // EKF / ODOMETRY CONSTANTS
@@ -89,9 +96,6 @@ unsigned long encoderStillStartMs = 0;
 
 // ==========================================
 // FORWARD DECLARATIONS
-// (runControlLoop is kept for reference but
-//  is no longer called from loop() —
-//  wallFollowerUpdate() drives everything.)
 // ==========================================
 void runControlLoop(float dt);
 void runWallPIDLoop(float dt);
@@ -192,8 +196,7 @@ void setup() {
   integral_yaw   = 0;
   integral_wall  = 0;
 
-  // ── Wall follower init (must come after the above inits) ──
-  initWallFollower();                        // ← NEW
+  initWallFollower();
 
   unsigned long now = millis();
   lastLoopTime  = now;
@@ -207,7 +210,6 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
 
-  // Compute cadence flags (same intervals as before)
   bool doMotor = (currentTime - lastLoopTime  >= LOOP_INTERVAL_MS);
   bool doLidar = (currentTime - lastLidarTime >= LIDAR_INTERVAL_MS);
   bool doPrint = (currentTime - lastPrintTime >= PRINT_INTERVAL_MS);
@@ -218,8 +220,7 @@ void loop() {
   if (doMotor)  lastLoopTime  = currentTime;
   if (doLidar)  lastLidarTime = currentTime;
 
-  // ── Single call replaces the old runWallPIDLoop + runControlLoop ──
-  wallFollowerUpdate(dt_motor, dt_lidar, doMotor, doLidar);   // ← NEW
+  wallFollowerUpdate(dt_motor, dt_lidar, doMotor, doLidar);
 
   if (doPrint) {
     lastPrintTime = currentTime;
@@ -229,22 +230,29 @@ void loop() {
 
 // ==========================================
 // WALL CENTERING PID
-// (still called by wallFollowerUpdate)
 // ==========================================
 void runWallPIDLoop(float dt) {
   current_lidars = readLidars();
-
   bool hasLeft  = current_lidars.left  < WALL_THRESHOLD;
   bool hasRight = current_lidars.right < WALL_THRESHOLD;
 
   float error_wall = 0.0f;
 
   if (hasLeft && hasRight) {
+    Kp_wall = Kp_tunnel;
+    Kd_wall = Kd_tunnel;
     error_wall = (float)(current_lidars.left - current_lidars.right);
+    
   } else if (hasLeft && !hasRight) {
+    Kp_wall = Kp_single;
+    Kd_wall = Kd_single;
     error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
+    
   } else if (!hasLeft && hasRight) {
+    Kp_wall = Kp_single;
+    Kd_wall = Kd_single;
     error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
+    
   } else {
     correction_angle = 0.0f;
     integral_wall    = 0.0f;
@@ -260,9 +268,11 @@ void runWallPIDLoop(float dt) {
 
   integral_wall += error_wall * dt;
   float deriv_wall = (error_wall - prev_error_wall) / dt;
-
-  correction_angle = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
-  correction_angle = constrain(correction_angle, -10.0f, 10.0f);
+  
+  float target_correction = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
+  
+  correction_angle = (correction_angle * 0.7f) + (target_correction * 0.3f);
+  correction_angle = constrain(correction_angle, -8.0f, 8.0f);
 
   prev_error_wall = error_wall;
   targetYaw       = baseTargetYaw + correction_angle;
@@ -275,17 +285,15 @@ float frontBrakeScale() {
   int d = current_lidars.front;
   if (d >= FRONT_STOP_MM) return 1.0f;
   if (d <= FRONT_HALT_MM) return 0.0f;
+  
   return (float)(d - FRONT_HALT_MM) / (float)(FRONT_STOP_MM - FRONT_HALT_MM);
 }
 
 // ==========================================
 // ORIGINAL CONTROL LOOP
-// Kept for reference. No longer called from
-// loop() — logic lives in wallFollowerUpdate().
 // ==========================================
 void runControlLoop(float dt) {
-  // (unchanged — see WallFollower.h for the
-  //  integrated version that adds maze logic)
+  // Logic lives in wallFollowerUpdate() inside WallFollower.h
 }
 
 // ==========================================
@@ -310,11 +318,9 @@ void printTelemetry() {
     ekfTelemetry.x_mm, ekfTelemetry.y_mm, ekfTelemetry.theta_deg,
     ctGetRow(), ctGetCol(), headingName(ctGetHeading()),
     current_lidars.left, current_lidars.front, current_lidars.right,
-    // Wall follower state label
     (wf_state == WF_IDLE)         ? "IDLE" :
     (wf_state == WF_MOVING)       ? "MOVING" :
                                     "GOAL!"
   );
-
   Serial.println(telemetryString);
 }
