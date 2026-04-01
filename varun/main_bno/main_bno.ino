@@ -115,12 +115,25 @@ float Kp_vel_L = 1.0, Ki_vel_L = 0.0, Kd_vel_L = 0.1;
 float Kp_vel_R = 1.0, Ki_vel_R = 0.0, Kd_vel_R = 0.1; 
 
 // 2. Middle Loop (Yaw PID)
-float Kp_yaw = 1.0, Ki_yaw = 0.0, Kd_yaw = 0.05; 
+float Kp_yaw = 0.6, Ki_yaw = 0.0, Kd_yaw = 0.06; 
+
+
 
 // 3. Outer Loop (Wall Centering PID)
-float Kp_wall = 0.25;
+// Tunnel Constants (Both walls present) - More aggressive
+float Kp_tunnel = 0.12; 
+float Kd_tunnel = 0.08;
+
+// Single Wall Constants (Only one wall) - More gentle/dampened
+float Kp_single = 0.06; 
+float Kd_single = 0.12; // Higher D helps stop the jitter
+
+// Current active constants (will be swapped by logic)
+float Kp_wall = Kp_tunnel;
+float Kd_wall = Kd_tunnel;
 float Ki_wall = 0.0;
-float Kd_wall = 0.05;
+
+
         
 float baseTargetVelocity = 15.0;
 int basePWM = 50; 
@@ -132,7 +145,7 @@ float targetYaw = 0.0;         // baseTargetYaw + correction_angle
 
 float vel_tolerance = 0.5; 
 float yaw_tolerance = 0.5; 
-float wall_tolerance = 5.0;    // mm
+float wall_tolerance = 10.0;    // mm
 const int WALL_THRESHOLD = 150;
 
 const float SINGLE_WALL_TARGET_MM = 63.0; // desired distance when only one wall visible
@@ -263,22 +276,27 @@ void runWallPIDLoop(float dt) {
 
   float error_wall = 0.0;
 
+  // --- GAIN SCHEDULING LOGIC ---
   if (hasLeft && hasRight) {
-    // Case 1: tunnel — centre between both walls
+    // Tunnel Case: Use firmer constants
+    Kp_wall = Kp_tunnel;
+    Kd_wall = Kd_tunnel;
     error_wall = (float)(current_lidars.left - current_lidars.right);
 
-  } else if (hasLeft && !hasRight) {
-    // Case 2: only left wall visible — keep 63 mm from it
-    // Positive error → too close to left → steer right (correction goes negative)
+  } else if (hasLeft) {
+    // Single Wall Left: Use gentle constants
+    Kp_wall = Kp_single;
+    Kd_wall = Kd_single;
     error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
 
-  } else if (!hasLeft && hasRight) {
-    // Case 2: only right wall visible — keep 63 mm from it
-    // Negative error → too close to right → steer left (correction goes positive)
+  } else if (hasRight) {
+    // Single Wall Right: Use gentle constants
+    Kp_wall = Kp_single;
+    Kd_wall = Kd_single;
     error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
 
   } else {
-    // Case 3: no walls — coast straight, reset
+    // No Walls: Reset and return
     correction_angle = 0.0;
     integral_wall    = 0.0;
     prev_error_wall  = 0.0;
@@ -286,16 +304,23 @@ void runWallPIDLoop(float dt) {
     return;
   }
 
+  // Deadzone to prevent micro-jitters when near target
   if (abs(error_wall) <= wall_tolerance) {
-    error_wall    = 0.0;
-    integral_wall = 0.0;
+    error_wall = 0.0;
   }
 
+  // PID Calculation
   integral_wall += error_wall * dt;
   float deriv_wall = (error_wall - prev_error_wall) / dt;
 
-  correction_angle = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
-  correction_angle = constrain(correction_angle, -10.0, 10.0);
+  float target_correction = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
+  
+  // SMOOTHING FILTER (Crucial for Single Wall Jitter)
+  // This prevents the targetYaw from jumping instantly
+  correction_angle = (correction_angle * 0.7) + (target_correction * 0.3);
+  
+  // Constrain the steering authority
+  correction_angle = constrain(correction_angle, -8.0, 8.0);
 
   prev_error_wall = error_wall;
   targetYaw = baseTargetYaw + correction_angle;
