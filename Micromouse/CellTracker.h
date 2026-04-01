@@ -18,7 +18,7 @@
 // ==========================================
 // CONSTANTS
 // ==========================================
-const float CELL_SIZE_MM        = 180.0f;
+const float CELL_SIZE_MM        = 155.0f;
 const float CELL_ENTRY_MARGIN   = 30.0f;   // must be this far past a cell boundary
                                             // before a transition is confirmed
                                             // (prevents false triggers near boundaries)
