@@ -1,71 +1,49 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// ==========================================
-// MOTOR PINS
-// ==========================================
-const int M1_PWM = 0;
-const int M1_DIR = 1;
-const int M2_PWM = 2;
-const int M2_DIR = 10;
+#include <Arduino.h>
 
 // ==========================================
-// MOTOR / ENCODER POLARITY
-// Set to -1 if that side is reversed on your robot.
+// MOTOR DRIVER PINS (Romeo Mini ESP32-C3)
 // ==========================================
-const int LEFT_MOTOR_SIGN = 1;
-const int RIGHT_MOTOR_SIGN = 1;
-const int LEFT_ENCODER_SIGN = 1;
-const int RIGHT_ENCODER_SIGN = 1;
+const int M1_PWM = 0;  // Left Motor Speed (0-255)
+const int M1_DIR = 1;  // Left Motor Direction (HIGH/LOW)
+const int M2_PWM = 2;  // Right Motor Speed (0-255)
+const int M2_DIR = 10; // Right Motor Direction (HIGH/LOW)
 
 // ==========================================
 // ENCODER PINS
 // ==========================================
-const int ENC_L_A = 6;
-const int ENC_L_B = 7;
-const int ENC_R_A = 20;
-const int ENC_R_B = 21;
+// Note: ESP32-C3 supports interrupts on all GPIO pins.
+const int ENC_L_A = 6; // Left Encoder Phase A
+const int ENC_L_B = 7; // Left Encoder Phase B
+const int ENC_R_A = 20; // Right Encoder Phase A
+const int ENC_R_B = 21; // Right Encoder Phase B
 
 // ==========================================
-// LIDAR XSHUT PINS
+// I2C & LIDAR XSHUT PINS
 // ==========================================
-const int XSHUT_FRONT = 5;
-const int XSHUT_LEFT  = 3;
-const int XSHUT_RIGHT = 4;
+const int I2C_SDA = 8; // Your MPU6050 & Lidar SDA pin
+const int I2C_SCL = 9; // Your MPU6050 & Lidar SCL pin
+
+const int XSHUT_FRONT = 5; // Front VL53L0X
+const int XSHUT_LEFT  = 4; // Left VL53L0X
+const int XSHUT_RIGHT = 3; // Right VL53L0X
 
 // ==========================================
-// I2C PINS
+// ROBOT PHYSICAL CONSTANTS & LIMITS
 // ==========================================
-const int SDA_PIN = 8;
-const int SCL_PIN = 9;
+// const float TICKS_PER_REV = 360.0;          // Adjust to your encoder specs
+// const float WHEEL_CIRCUMFERENCE_MM = 100.0; // Adjust to your wheel size
 
-// ==========================================
-// WHEEL SPECS
-// ==========================================
-const int   PPR                    = 7;
-const int   GEAR_RATIO             = 30;
-const int   TICKS_PER_REV          = PPR * GEAR_RATIO;
-const float WHEEL_DIAMETER_MM      = 34.0;
-const float WHEEL_CIRCUMFERENCE_MM = 3.14159 * WHEEL_DIAMETER_MM;
+// const float MAX_WHEEL_SPEED_MMPS = 500.0;
+// const float MIN_WHEEL_SPEED_MMPS = 50.0;
+// const float MOTOR_INTEGRAL_LIMIT = 200.0;
+// const float MOTOR_PID_ALPHA = 0.2;
 
-// ==========================================
-// SENSOR THRESHOLD
-// ==========================================
-const int   WALL_THRESHOLD         = 120;
-
-// ==========================================
-// MOTOR SPEED PID
-// ==========================================
-const float Kp_motor_speed         = 0.5;
-const float Ki_motor_speed         = 0.0;
-const float Kd_motor_speed         = 0.08;
-const float MOTOR_PID_ALPHA        = 0.25;
-const float MOTOR_INTEGRAL_LIMIT   = 180.0;
-
-// ==========================================
-// MOTOR SPEED LIMITS
-// ==========================================
-const float MAX_WHEEL_SPEED_MMPS   = 280.0;
-const float MIN_WHEEL_SPEED_MMPS   = 10.0;
+// // Inner PID loop constants for Motors.h
+// const float Kp_motor_speed = 1.0;
+// const float Ki_motor_speed = 0.1;
+// const float Kd_motor_speed = 0.05;
 
 #endif

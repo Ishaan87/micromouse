@@ -3,52 +3,37 @@
 
 #include "Config.h"
 
-// ==========================================
-// RAW TICK COUNTS
-// volatile — changed inside interrupts
-// ==========================================
-volatile long leftTicks  = 0;
+// Volatile because these change inside hardware interrupts
+volatile long leftTicks = 0;
 volatile long rightTicks = 0;
 
-// ==========================================
-// FOR SPEED CALCULATION
-// ==========================================
-volatile long lastLeftTicks  = 0;
-volatile long lastRightTicks = 0;
-unsigned long lastSpeedTime  = 0;
+// Add these missing variables:
+long lastLeftTicks = 0;
+long lastRightTicks = 0;
+unsigned long lastSpeedTime = 0;
 
-// ==========================================
-// INTERRUPT HANDLERS
-// IRAM_ATTR — runs from RAM, not Flash
-// ==========================================
-void IRAM_ATTR countLeft() {
-  if (digitalRead(ENC_L_B) == HIGH) leftTicks += LEFT_ENCODER_SIGN;
-  else                               leftTicks -= LEFT_ENCODER_SIGN;
+// IRAM_ATTR loads the interrupt into the ESP32's fast RAM for instant execution
+void IRAM_ATTR leftEncoderISR() {
+  if (digitalRead(ENC_L_B) == HIGH) leftTicks++;
+  else                               leftTicks--; 
 }
 
-void IRAM_ATTR countRight() {
-  if (digitalRead(ENC_R_B) == HIGH) rightTicks += RIGHT_ENCODER_SIGN;
-  else                               rightTicks -= RIGHT_ENCODER_SIGN;
+void IRAM_ATTR rightEncoderISR() {
+  if (digitalRead(ENC_R_B) == HIGH) rightTicks++;
+  else                               rightTicks--;
 }
 
-// ==========================================
-// INIT
-// ==========================================
 void initEncoders() {
   pinMode(ENC_L_A, INPUT_PULLUP);
   pinMode(ENC_L_B, INPUT_PULLUP);
   pinMode(ENC_R_A, INPUT_PULLUP);
   pinMode(ENC_R_B, INPUT_PULLUP);
 
-  attachInterrupt(digitalPinToInterrupt(ENC_L_A), countLeft,  RISING);
-  attachInterrupt(digitalPinToInterrupt(ENC_R_A), countRight, RISING);
-
-  lastSpeedTime = millis();
+  // Attach interrupts to trigger on the RISING edge of the encoder signal
+  attachInterrupt(digitalPinToInterrupt(ENC_L_A), leftEncoderISR, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENC_R_A), rightEncoderISR, RISING);
 }
 
-// ==========================================
-// RESET — call before each movement
-// ==========================================
 void resetEncoders() {
   noInterrupts();
   leftTicks      = 0;
@@ -103,27 +88,27 @@ EncoderData readEncoders() {
   long deltaLeft         = currentLeft  - lastLeftTicks;
   long deltaRight        = currentRight - lastRightTicks;
 
-  // RPM
-  if (deltaTime > 0) {
-    data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-    data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
-  } else {
-    data.leftSpeedRPM  = 0;
-    data.rightSpeedRPM = 0;
-  }
+  // // RPM
+  // if (deltaTime > 0) {
+  //   data.leftSpeedRPM  = (deltaLeft  / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  //   data.rightSpeedRPM = (deltaRight / (float)TICKS_PER_REV) / (deltaTime / 60.0);
+  // } else {
+  //   data.leftSpeedRPM  = 0;
+  //   data.rightSpeedRPM = 0;
+  // }
 
-  // mm/s
-  if (deltaTime > 0) {
-    data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-    data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
-  } else {
-    data.leftSpeedMMPS  = 0;
-    data.rightSpeedMMPS = 0;
-  }
+  // // mm/s
+  // if (deltaTime > 0) {
+  //   data.leftSpeedMMPS  = (deltaLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  //   data.rightSpeedMMPS = (deltaRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM / deltaTime;
+  // } else {
+  //   data.leftSpeedMMPS  = 0;
+  //   data.rightSpeedMMPS = 0;
+  // }
 
-  // distance
-  data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
-  data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // // distance
+  // data.leftDistanceMM  = (currentLeft  / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
+  // data.rightDistanceMM = (currentRight / (float)TICKS_PER_REV) * WHEEL_CIRCUMFERENCE_MM;
 
   // raw ticks
   data.leftTicks  = currentLeft;

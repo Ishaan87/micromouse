@@ -18,24 +18,26 @@ float leftMotorFilteredD = 0.0;
 float rightMotorFilteredD = 0.0;
 unsigned long lastMotorPidMicros = 0;
 
-void applyMotorPWM(int leftPwm, int rightPwm) {
-  leftPwm *= LEFT_MOTOR_SIGN;
-  rightPwm *= RIGHT_MOTOR_SIGN;
+void applyMotorPWM(int leftSpeed, int rightSpeed) {
+  leftSpeed = constrain(leftSpeed, -255, 255);
+  rightSpeed = constrain(rightSpeed, -255, 255);
 
-  if (leftPwm >= 0) {
-    digitalWrite(M1_DIR, HIGH);
-    analogWrite(M1_PWM, constrain(leftPwm, 0, 255));
+  // Left Motor Logic (Unchanged)
+  if (leftSpeed >= 0) {
+    digitalWrite(M1_DIR, LOW); // Forward
+    analogWrite(M1_PWM, leftSpeed);
   } else {
-    digitalWrite(M1_DIR, LOW);
-    analogWrite(M1_PWM, constrain(-leftPwm, 0, 255));
+    digitalWrite(M1_DIR, HIGH);  // Reverse
+    analogWrite(M1_PWM, -leftSpeed); // Make speed positive for PWM
   }
 
-  if (rightPwm >= 0) {
-    digitalWrite(M2_DIR, HIGH);
-    analogWrite(M2_PWM, constrain(rightPwm, 0, 255));
+  // Right Motor Logic (FLIPPED)
+  if (rightSpeed >= 0) {
+    digitalWrite(M2_DIR, LOW);  // Forward is now LOW
+    analogWrite(M2_PWM, rightSpeed);
   } else {
-    digitalWrite(M2_DIR, LOW);
-    analogWrite(M2_PWM, constrain(-rightPwm, 0, 255));
+    digitalWrite(M2_DIR, HIGH); // Reverse is now HIGH
+    analogWrite(M2_PWM, -rightSpeed); 
   }
 }
 
@@ -66,92 +68,25 @@ void resetMotorSpeedPID() {
   applyMotorPWM(0, 0);
 }
 
-void setWheelSpeedTargetsMMPS(float leftTarget, float rightTarget) {
-  targetLeftSpeedMMPS = constrain(leftTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
-  targetRightSpeedMMPS = constrain(rightTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
-}
+// void setWheelSpeedTargetsMMPS(float leftTarget, float rightTarget) {
+//   targetLeftSpeedMMPS = constrain(leftTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
+//   targetRightSpeedMMPS = constrain(rightTarget, -MAX_WHEEL_SPEED_MMPS, MAX_WHEEL_SPEED_MMPS);
+// }
 
-int runSingleMotorPID(float targetSpeed,
-                      float measuredSpeed,
-                      int currentPwm,
-                      float &integral,
-                      float &lastError,
-                      float &filteredD,
-                      float dt) {
-  if (abs(targetSpeed) < 1.0f) {
-    integral = 0.0;
-    lastError = 0.0;
-    filteredD = 0.0;
-    return 0;
-  }
+// void moveForward(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(speedMMPS, speedMMPS);
+// }
 
-  float error = targetSpeed - measuredSpeed;
-  integral += error * dt;
-  integral = constrain(integral, -MOTOR_INTEGRAL_LIMIT, MOTOR_INTEGRAL_LIMIT);
+// void moveBackward(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(-speedMMPS, -speedMMPS);
+// }
 
-  float rawD = (error - lastError) / dt;
-  filteredD = (MOTOR_PID_ALPHA * rawD) + ((1.0f - MOTOR_PID_ALPHA) * filteredD);
-  lastError = error;
+// void stopMotors() {
+//   resetMotorSpeedPID();
+// }
 
-  float output = (Kp_motor_speed * error) +
-                 (Ki_motor_speed * integral) +
-                 (Kd_motor_speed * filteredD);
-
-  int nextPwm = currentPwm + (int)output;
-  int minPwm = max(
-    , (int)((MIN_WHEEL_SPEED_MMPS / MAX_WHEEL_SPEED_MMPS) * 255.0f));
-
-  if (targetSpeed > 0) {
-    nextPwm = constrain(nextPwm, minPwm, 255);
-  } else {
-    nextPwm = constrain(nextPwm, -255, -minPwm);
-  }
-
-  return nextPwm;
-}
-
-void updateMotorSpeedPID() {
-  unsigned long now = micros();
-  float dt = max((now - lastMotorPidMicros) / 1000000.0f, 0.0001f);
-  lastMotorPidMicros = now;
-
-  EncoderData encoderData = readEncoders();
-  measuredLeftSpeedMMPS = encoderData.leftSpeedMMPS;
-  measuredRightSpeedMMPS = encoderData.rightSpeedMMPS;
-
-  commandedLeftPWM = runSingleMotorPID(targetLeftSpeedMMPS,
-                                       measuredLeftSpeedMMPS,
-                                       commandedLeftPWM,
-                                       leftMotorIntegral,
-                                       leftMotorLastError,
-                                       leftMotorFilteredD,
-                                       dt);
-
-  commandedRightPWM = runSingleMotorPID(targetRightSpeedMMPS,
-                                        measuredRightSpeedMMPS,
-                                        commandedRightPWM,
-                                        rightMotorIntegral,
-                                        rightMotorLastError,
-                                        rightMotorFilteredD,
-                                        dt);
-
-  applyMotorPWM(commandedLeftPWM, commandedRightPWM);
-}
-
-void moveForward(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(speedMMPS, speedMMPS);
-}
-
-void moveBackward(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(-speedMMPS, -speedMMPS);
-}
-
-void stopMotors() {
-  resetMotorSpeedPID();
-}
-
-void spinInPlace(float speedMMPS) {
-  setWheelSpeedTargetsMMPS(speedMMPS, -speedMMPS);
-}
+// void spinInPlace(float speedMMPS) {
+//   setWheelSpeedTargetsMMPS(speedMMPS, -speedMMPS);
+//}
 
 #endif
