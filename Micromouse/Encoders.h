@@ -14,12 +14,12 @@ unsigned long lastSpeedTime = 0;
 
 // IRAM_ATTR loads the interrupt into the ESP32's fast RAM for instant execution
 void IRAM_ATTR leftEncoderISR() {
-  if (digitalRead(ENC_L_B) == HIGH) leftTicks++;
-  else                               leftTicks--; 
+  if (digitalRead(ENC_L_B) == HIGH) leftTicks--;  // FLIPPED: Now --
+  else                               leftTicks++; // FLIPPED: Now ++
 }
 
 void IRAM_ATTR rightEncoderISR() {
-  if (digitalRead(ENC_R_B) == HIGH) rightTicks++;
+  if (digitalRead(ENC_R_B) == HIGH) rightTicks++; // Leave this one as ++
   else                               rightTicks--;
 }
 
