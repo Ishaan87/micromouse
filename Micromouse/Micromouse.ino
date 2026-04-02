@@ -91,15 +91,15 @@ float Kp_vel_R = 1.0,  Ki_vel_R = 0.0, Kd_vel_R = 0.1;
 // Yaw PID
 float Kp_yaw = 0.6,  Ki_yaw = 0.0,  Kd_yaw = 0.06;
 
-// Wall-centering PID (two gain sets: tunnel = both walls, single = one wall)
+// Wall-centering PID
 float Kp_tunnel = 0.12, Kd_tunnel = 0.08;
 float Kp_single = 0.06, Kd_single = 0.12;
 float Kp_wall   = Kp_tunnel;
 float Kd_wall   = Kd_tunnel;
 float Ki_wall   = 0.0;
 
-float baseTargetVelocity = 15.0;
-int   basePWM            = 50;
+float baseTargetVelocity = 200.0;
+int   basePWM            = 70;
 
 // Heading management
 float baseTargetYaw    = 0.0;
@@ -116,8 +116,8 @@ float wall_tolerance = 10.0;
 // ==========================================
 const int   WALL_THRESHOLD         = 110;   // lidar < this → wall present for PID
 const float SINGLE_WALL_TARGET_MM  = 63.0f;
-const int   FRONT_STOP_MM          = 110;   // start braking
-const int   FRONT_HALT_MM          = 65;    // full stop
+const int   FRONT_STOP_MM          = 70;    // start braking
+const int   FRONT_HALT_MM          = 55;    // full stop
 
 // ==========================================
 // EKF / ODOMETRY CONSTANTS
@@ -129,18 +129,8 @@ const float TRACK_WIDTH_MM       = 72.0f;
 // ==========================================
 // REACTIVE SOLVER CONSTANTS
 // ==========================================
-// BUG FIX 1: These two thresholds were swapped/inconsistent between branches.
-// WALL_THRESHOLD (110) is for PID centering.
-// WALL_MISSING_THRESHOLD (180) is for detecting an open gap at an intersection.
-const int WALL_MISSING_THRESHOLD  = 180;   // lidar > this → no wall, gap detected
-const int FRONT_BLOCKED_THRESHOLD = 110;   // lidar < this → front wall present
-
-// BUG FIX 2: PIVOT_OFFSET_MM was 77.5 (half a 155mm cell).
-// The robot needs to be at the CENTER of the intersection to turn correctly,
-// not half a cell ahead. The center of the current cell relative to where
-// gap detection fires is approximately half a cell ahead.
-// Tune this on your actual maze — start with 0 and increase if the robot
-// turns short of the intersection centre.
+const int WALL_MISSING_THRESHOLD  = 180;  
+const int FRONT_BLOCKED_THRESHOLD = 70;   
 const float PIVOT_OFFSET_MM = 77.5f;
 
 // ==========================================
@@ -171,31 +161,16 @@ EKFTelemetry ekfTelemetry;
 // ==========================================
 // REACTIVE SOLVER STATE
 // ==========================================
-// BUG FIX 3: The original code used edge-trigger detection
-// (gap "just appeared") which caused the rotation loop:
-//
-//   1. Robot sees right gap → triggers turn → turns right
-//   2. After turn, lidar reads the NEW corridor as another "gap just appeared"
-//      because rightWallWasPresent was still true from before the turn
-//   3. Triggers another turn → robot spins forever
-//
-// FIX: Track a cooldown period after any turn. During cooldown,
-// gap detection is suppressed so the robot drives into the new
-// corridor before looking for the next intersection.
-//
-// Also added TURN_DEBOUNCE_MS: minimum time between turns.
-
 enum BotState {
   DRIVING,
-  TURN_COOLDOWN   // replaces the old ALIGNING_FOR_TURN state
+  TURN_COOLDOWN,
+  FINISHED
 };
 
 BotState      currentState      = DRIVING;
 unsigned long cooldownStartMs   = 0;
-const unsigned long TURN_COOLDOWN_MS = 600; // ms to ignore gaps after a turn
+const unsigned long TURN_COOLDOWN_MS = 600; 
 
-// These track whether a wall was CONTINUOUSLY absent,
-// not just absent this one cycle (extra debounce)
 bool rightWallWasPresent = true;
 bool leftWallWasPresent  = true;
 
@@ -221,8 +196,6 @@ void resetPIDIntegrals() {
 
 // ==========================================
 // BLOCKING HELPER: DRIVE DISTANCE
-// Drives forward a fixed distance using
-// encoder ticks. Used for pivot offset.
 // ==========================================
 void driveForwardDistanceMM(float distanceMM) {
   noInterrupts();
@@ -247,10 +220,10 @@ void driveForwardDistanceMM(float distanceMM) {
 
     float yaw_err = yawRef - readYawDegrees();
     float corr    = Kp_yaw * yaw_err * 20.0f;
-    applyMotorPWM(60 - (int)corr, 60 + (int)corr);
+    applyMotorPWM(100 - (int)corr, 100 + (int)corr);
     delay(10);
   }
-  delay(100); // brief settle pause
+  delay(100); 
 }
 
 // ==========================================
@@ -261,6 +234,21 @@ float frontBrakeScale() {
   if (d >= FRONT_STOP_MM) return 1.0f;
   if (d <= FRONT_HALT_MM) return 0.0f;
   return (float)(d - FRONT_HALT_MM) / (float)(FRONT_STOP_MM - FRONT_HALT_MM);
+}
+
+
+// ==========================================
+// WEBSOCKET EVENT HANDLER
+// ==========================================
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[WS] Client #%u Disconnected\n", num);
+      break;
+    case WStype_CONNECTED:
+      Serial.printf("[WS] Client #%u Connected!\n", num);
+      break;
+  }
 }
 
 // ==========================================
@@ -275,6 +263,8 @@ void setup() {
   server.on("/", []() { server.send(200, "text/html", index_html); });
   server.begin();
   webSocket.begin();
+  webSocket.onEvent(webSocketEvent); // <--- ADD THIS LINE
+  
   Serial.print("Connect to Wi-Fi: ");  Serial.println(ssid);
   Serial.print("Open browser to: http://"); Serial.println(WiFi.softAPIP());
 
@@ -310,7 +300,6 @@ void setup() {
   prevRightTicks = 0;
   resetPIDIntegrals();
 
-  // Force a fresh lidar read before we start
   current_lidars = readLidars();
   rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
   leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
@@ -328,10 +317,13 @@ void setup() {
 // MAIN LOOP
 // ==========================================
 void loop() {
+  // ── 1. WI-FI SERVING ──
   webSocket.loop();
   server.handleClient();
 
   unsigned long now = millis();
+  
+  // ── 2. TELEMETRY (At the top so it never stutters) ──
   if (now - lastPrintTime >= PRINT_INTERVAL_MS) {
     lastPrintTime = now;
     printTelemetry();
@@ -339,22 +331,19 @@ void loop() {
 
   bool doLidar = (now - lastLidarTime >= LIDAR_INTERVAL_MS);
   bool doMotor = (now - lastLoopTime  >= LOOP_INTERVAL_MS);
-  bool doPrint = (now - lastPrintTime >= PRINT_INTERVAL_MS);
 
-
-  // ── LIDAR UPDATE ──────────────────────────────────────────
+  // ── 3. LIDAR UPDATE ──
   if (doLidar) {
     float dt_lidar = (now - lastLidarTime) / 1000.0f;
     lastLidarTime  = now;
     current_lidars = readLidars();
 
-    // Only run wall-centering PID when driving normally
     if (currentState == DRIVING) {
       runWallPIDLoop(dt_lidar);
     }
   }
 
-  // ── MOTOR / SOLVER UPDATE ─────────────────────────────────
+  // ── 4. MOTOR / SOLVER UPDATE ──
   if (doMotor) {
     float dt_motor = (now - lastLoopTime) / 1000.0f;
     lastLoopTime   = now;
@@ -381,112 +370,90 @@ void loop() {
       printCellState();
     }
 
+    // <-- ADD THIS GOAL CHECK HERE -->
+    if (ctGetRow() == 4 && ctGetCol() == 4) {
+      applyMotorPWM(0, 0);
+      Serial.println("\n*** GOAL REACHED! ***");
+      currentState = FINISHED;
+    }
+
+    // If finished, do absolutely nothing else.
+    if (currentState == FINISHED) {
+      applyMotorPWM(0, 0);
+      return; 
+    }
+
     prevLeftTicks  = currentLeftTicks;
     prevRightTicks = currentRightTicks;
 
-    // ── COOLDOWN STATE ────────────────────────────────────────
-    // BUG FIX 3 continued: while in cooldown just drive forward,
-    // suppress all turn decisions.
+    // ── COOLDOWN STATE ──
     if (currentState == TURN_COOLDOWN) {
       if (now - cooldownStartMs >= TURN_COOLDOWN_MS) {
-        // Re-sample lidar to get the actual new-corridor reading
         current_lidars      = readLidars();
         rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
         leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
         currentState        = DRIVING;
         Serial.println("[RX] Cooldown over — resuming normal drive.");
       } else {
-        // During cooldown: drive straight, no turning
         runDrivingPID(dt_motor, false);
-        return;
+        // We do NOT return here anymore, allowing the loop to finish cleanly
       }
-    }
+    } 
+    // ── DRIVING STATE ──
+    else {
+      bool rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
+      bool leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
+      bool frontOpen  = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
-    // ── REACTIVE SOLVER (DRIVING STATE) ──────────────────────
-    bool rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
-    bool leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
-    bool frontOpen  = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
+      bool rightGapSustained = (rightOpen && !rightWallWasPresent);
+      bool shouldDecide = (!frontOpen) || rightGapSustained;
 
-    // BUG FIX 4: Old code used gap-edge-trigger detection.
-    // This fired when a wall DISAPPEARED this cycle vs last cycle.
-    // Problem: after turning, both walls appear "new" because the
-    // entire scene changed, causing immediate re-triggering.
-    //
-    // New approach: trigger a turn decision when:
-    //   (a) the front is blocked, OR
-    //   (b) the right is open AND was open last cycle too
-    //       (sustained, not just a one-frame flicker)
-    //
-    // This is much more robust than edge detection.
+      if (shouldDecide) {
+        // applyMotorPWM(0, 0);
+        Serial.println("\n[RX] INTERSECTION / DECISION POINT");
 
-    bool rightGapSustained = (rightOpen && !rightWallWasPresent);
-    // Note: rightWallWasPresent is now updated every cycle below,
-    // so rightGapSustained becomes true only when the right has been
-    // open for at least one full lidar cycle before this one.
+        if (frontOpen && PIVOT_OFFSET_MM > 0.0f) {
+          Serial.println("[RX] Pivoting to cell centre...");
+          driveForwardDistanceMM(PIVOT_OFFSET_MM);
+        }
 
-    bool shouldDecide = (!frontOpen) || rightGapSustained;
+        current_lidars = readLidars();
+        rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
+        leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
+        frontOpen  = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
-    if (shouldDecide) {
-      applyMotorPWM(0, 0);
-      Serial.println("\n[RX] INTERSECTION / DECISION POINT");
+        if (rightOpen) {
+          Serial.println("[RX] Decision: TURN RIGHT");
+          turnCW90();
+        } else if (frontOpen) {
+          Serial.println("[RX] Decision: GO STRAIGHT");
+        } else if (leftOpen) {
+          Serial.println("[RX] Decision: TURN LEFT");
+          turnACW90();
+        } else {
+          Serial.println("[RX] Decision: DEAD END — U-TURN");
+          turn180();
+        }
 
-      // Pivot forward to cell centre if the front is still open
-      if (frontOpen && PIVOT_OFFSET_MM > 0.0f) {
-        Serial.println("[RX] Pivoting to cell centre...");
-        driveForwardDistanceMM(PIVOT_OFFSET_MM);
-      }
+        baseTargetYaw = readYawDegrees();
+        targetYaw     = baseTargetYaw;
+        resetPIDIntegrals();
 
-      // Re-read lidar after the pivot — scene may have changed
-      current_lidars = readLidars();
-      rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
-      leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
-      frontOpen  = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
+        currentState    = TURN_COOLDOWN;
+        cooldownStartMs = millis();
 
-      // Right-hand rule priority: RIGHT > STRAIGHT > LEFT > U-TURN
-      if (rightOpen) {
-        Serial.println("[RX] Decision: TURN RIGHT");
-        turnCW90();
-      } else if (frontOpen) {
-        Serial.println("[RX] Decision: GO STRAIGHT");
-        // No physical turn needed
-      } else if (leftOpen) {
-        Serial.println("[RX] Decision: TURN LEFT");
-        turnACW90();
       } else {
-        Serial.println("[RX] Decision: DEAD END — U-TURN");
-        turn180();
+        runDrivingPID(dt_motor, !frontOpen);
       }
 
-      // Snap yaw reference to settled heading
-      baseTargetYaw = readYawDegrees();
-      targetYaw     = baseTargetYaw;
-      resetPIDIntegrals();
-
-      // Enter cooldown — suppresses re-triggering for TURN_COOLDOWN_MS
-      currentState    = TURN_COOLDOWN;
-      cooldownStartMs = millis();
-
-    } else {
-      // ── NORMAL DRIVING PID ──
-      runDrivingPID(dt_motor, !frontOpen);
+      rightWallWasPresent = !rightOpen;
+      leftWallWasPresent  = !leftOpen;
     }
-
-    // Update wall presence history for next cycle
-    rightWallWasPresent = !rightOpen;
-    leftWallWasPresent  = !leftOpen;
-  }
-
-  // ── TELEMETRY ─────────────────────────────────────────────
-  if (doPrint) {
-    lastPrintTime = now;
-    // printTelemetry();
   }
 }
 
 // ==========================================
 // DRIVING PID
-// Extracted from the loop so both the normal
-// path and the cooldown path share the same code.
 // ==========================================
 void runDrivingPID(float dt_motor, bool frontBlocked) {
   noInterrupts();
@@ -497,7 +464,6 @@ void runDrivingPID(float dt_motor, bool frontBlocked) {
   float vel_L = (float)(curLeft  - prevLeftTicks);
   float vel_R = (float)(curRight - prevRightTicks);
 
-  // Yaw PID
   float error_yaw = targetYaw - current_yaw_angle;
   if (fabsf(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
   integral_yaw += error_yaw * dt_motor;
@@ -582,7 +548,6 @@ void runWallPIDLoop(float dt) {
   float deriv_wall  = (error_wall - prev_error_wall) / dt;
   float target_corr = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
 
-  // Low-pass filter on correction to smooth out lidar noise
   correction_angle = (correction_angle * 0.7f) + (target_corr * 0.3f);
   correction_angle = constrain(correction_angle, -8.0f, 8.0f);
 

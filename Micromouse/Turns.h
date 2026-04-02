@@ -20,7 +20,7 @@ const float TURN_KP_CW = 3.0;
 const float TURN_KD_CW = 0.10;        // Raised to brake harder
 const int MIN_TURN_PWM_CW = 65;       // Lowered so it doesn't push past the target
 
-const int MAX_TURN_PWM = 160;     
+const int MAX_TURN_PWM = 255;     
 const float TURN_TOLERANCE = 0.5; 
 
 // ==========================================
