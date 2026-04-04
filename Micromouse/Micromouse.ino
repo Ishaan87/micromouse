@@ -1,7 +1,4 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <WebSocketsServer.h>
 #include "Config.h"
 #include "Motors.h"
 #include "Encoders.h"
@@ -10,76 +7,6 @@
 #include "CellTracker.h"
 #include "WallMap.h"
 #include "Turns.h"
-
-// ==========================================
-// WIRELESS WEB SERVER SETTINGS
-// ==========================================
-const char *ssid     = "Jerry";
-const char *password = "mouse1234";
-
-WebServer         server(80);
-WebSocketsServer  webSocket(81);
-
-// ==========================================
-// HTML DASHBOARD
-// ==========================================
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Micromouse Dashboard</title>
-    <style>
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
-        h1 { color: #38bdf8; letter-spacing: 1px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
-        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
-        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
-        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
-        .val.dual { font-size: 2.5rem; color: #38bdf8; }
-        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
-        .connected { color: #10b981 !important; }
-        .error { color: #ef4444 !important; }
-    </style>
-</head>
-<body>
-    <h1>Micromouse Control Center</h1>
-    <div id="status">Connecting to Bot...</div>
-    <div class="grid">
-        <div class="card"><h3>Target Velocity</h3><div id="val-target" class="val">0.0</div></div>
-        <div class="card"><h3>Current Yaw</h3><div id="val-yaw" class="val">0.00°</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>LiDAR (Left / Front / Right)</h3><div id="val-lidar" class="val dual">0 / 0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>Encoder Ticks (Left / Right)</h3><div id="val-enc" class="val dual">0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>PWM Power (Left / Right)</h3><div id="val-pwm" class="val dual">0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>Cell (Row / Col / Heading)</h3><div id="val-cell" class="val dual">0 / 0 / N</div></div>
-    </div>
-    <script>
-        var gateway = `ws://${window.location.hostname}:81/`;
-        var websocket;
-        window.addEventListener('load', initWebSocket);
-        function initWebSocket() {
-            websocket = new WebSocket(gateway);
-            websocket.onopen    = () => { document.getElementById('status').innerText = "Status: Live"; document.getElementById('status').className = "connected"; };
-            websocket.onclose   = () => { document.getElementById('status').innerText = "Disconnected. Reconnecting..."; document.getElementById('status').className = "error"; setTimeout(initWebSocket, 2000); };
-            websocket.onmessage = (event) => {
-                let line = event.data;
-                if (!line.includes("Target:")) return;
-                try {
-                    const parts = line.split('|');
-                    document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
-                    document.getElementById('val-enc').innerText    = parts[1].split(':')[1].trim();
-                    document.getElementById('val-pwm').innerText    = parts[2].split(':')[1].trim();
-                    document.getElementById('val-yaw').innerText    = parts[3].split(':')[1].trim() + "°";
-                    document.getElementById('val-lidar').innerText  = parts[4].split(':')[1].trim() + " mm";
-                    document.getElementById('val-cell').innerText   = parts[5].split(':')[1].trim();
-                } catch (e) { }
-            };
-        }
-    </script>
-</body>
-</html>
-)rawliteral";
 
 // ==========================================
 // TUNING PARAMETERS
@@ -98,7 +25,7 @@ float Kp_wall   = Kp_tunnel;
 float Kd_wall   = Kd_tunnel;
 float Ki_wall   = 0.0;
 
-float baseTargetVelocity = 50.0;
+float baseTargetVelocity = 75.0;
 int   basePWM            = 35;
 
 // Heading management
@@ -116,22 +43,22 @@ float wall_tolerance = 10.0;
 // ==========================================
 const int   WALL_THRESHOLD         = 110;   // lidar < this → wall present for PID
 const float SINGLE_WALL_TARGET_MM  = 63.0f;
-const int   FRONT_STOP_MM          = 70;    // start braking
-const int   FRONT_HALT_MM          = 55;    // full stop
+const int   FRONT_STOP_MM          = 100;   // start braking
+const int   FRONT_HALT_MM          = 75;    // full stop
 
 // ==========================================
 // EKF / ODOMETRY CONSTANTS
 // ==========================================
-const float TICKS_PER_REV        = 306.0f;
+const float TICKS_PER_REV          = 306.0f;
 const float WHEEL_CIRCUMFERENCE_MM = 144.5f;
-const float TRACK_WIDTH_MM       = 72.0f;
+const float TRACK_WIDTH_MM         = 72.0f;
 
 // ==========================================
 // REACTIVE SOLVER CONSTANTS
 // ==========================================
 const int WALL_MISSING_THRESHOLD  = 180;  
 const int FRONT_BLOCKED_THRESHOLD = 70;   
-const float PIVOT_OFFSET_MM = 77.5f;
+const float PIVOT_OFFSET_MM       = 77.5f;
 
 // ==========================================
 // SYSTEM VARIABLES
@@ -156,15 +83,13 @@ int  final_pwm_L    = 0;
 int  final_pwm_R    = 0;
 
 DistanceData current_lidars;
-EKFTelemetry ekfTelemetry;
 
 // ==========================================
 // REACTIVE SOLVER STATE
 // ==========================================
 enum BotState {
   DRIVING,
-  TURN_COOLDOWN,
-  FINISHED
+  TURN_COOLDOWN
 };
 
 BotState      currentState      = DRIVING;
@@ -236,21 +161,6 @@ float frontBrakeScale() {
   return (float)(d - FRONT_HALT_MM) / (float)(FRONT_STOP_MM - FRONT_HALT_MM);
 }
 
-
-// ==========================================
-// WEBSOCKET EVENT HANDLER
-// ==========================================
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-  switch(type) {
-    case WStype_DISCONNECTED:
-      Serial.printf("[WS] Client #%u Disconnected\n", num);
-      break;
-    case WStype_CONNECTED:
-      Serial.printf("[WS] Client #%u Connected!\n", num);
-      break;
-  }
-}
-
 // ==========================================
 // SETUP
 // ==========================================
@@ -258,18 +168,8 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  Serial.println("\nStarting Wi-Fi Access Point...");
-  WiFi.softAP(ssid, password);
-  server.on("/", []() { server.send(200, "text/html", index_html); });
-  server.begin();
-  webSocket.begin();
-  webSocket.onEvent(webSocketEvent); // <--- ADD THIS LINE
-  
-  Serial.print("Connect to Wi-Fi: ");  Serial.println(ssid);
-  Serial.print("Open browser to: http://"); Serial.println(WiFi.softAPIP());
-
   Serial.println("\n=================================");
-  Serial.println("  MICROMOUSE SYSTEM STARTUP");
+  Serial.println("  SIMPLE WALL FOLLOWER STARTUP");
   Serial.println("=================================");
 
   initMotors();
@@ -288,12 +188,9 @@ void setup() {
   baseTargetYaw     = 0.0;
   targetYaw         = 0.0;
 
+  // Keep EKF initialized for accurate yaw/encoder tracking if turns rely on it
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
   ekfInit(0.0f, 0.0f, 0.0f);
-  ekfTelemetry = ekfGetTelemetry();
-
-  initCellTracker();
-  initWallMap();
 
   resetEncoders();
   prevLeftTicks  = 0;
@@ -310,20 +207,16 @@ void setup() {
   lastPrintTime = now;
   currentState  = DRIVING;
 
-  Serial.println("Setup complete. Running.");
+  Serial.println("Setup complete. Running Right-Hand Rule.");
 }
 
 // ==========================================
 // MAIN LOOP
 // ==========================================
 void loop() {
-  // ── 1. WI-FI SERVING ──
-  webSocket.loop();
-  server.handleClient();
-
   unsigned long now = millis();
   
-  // ── 2. TELEMETRY (At the top so it never stutters) ──
+  // ── 1. TELEMETRY ──
   if (now - lastPrintTime >= PRINT_INTERVAL_MS) {
     lastPrintTime = now;
     printTelemetry();
@@ -332,7 +225,7 @@ void loop() {
   bool doLidar = (now - lastLidarTime >= LIDAR_INTERVAL_MS);
   bool doMotor = (now - lastLoopTime  >= LOOP_INTERVAL_MS);
 
-  // ── 3. LIDAR UPDATE ──
+  // ── 2. LIDAR UPDATE ──
   if (doLidar) {
     float dt_lidar = (now - lastLidarTime) / 1000.0f;
     lastLidarTime  = now;
@@ -343,45 +236,17 @@ void loop() {
     }
   }
 
-  // ── 4. MOTOR / SOLVER UPDATE ──
+  // ── 3. MOTOR / SOLVER UPDATE ──
   if (doMotor) {
     float dt_motor = (now - lastLoopTime) / 1000.0f;
     lastLoopTime   = now;
 
-    // ── EKF ──
     noInterrupts();
     long currentLeftTicks  =  leftTicks;
     long currentRightTicks = rightTicks;
     interrupts();
 
-    long deltaLeft  = currentLeftTicks  - prevLeftTicks;
-    long deltaRight = currentRightTicks - prevRightTicks;
-
     current_yaw_angle = readYawDegrees();
-    ekfPredict(deltaLeft, deltaRight);
-    ekfUpdateYawDeg(current_yaw_angle);
-    ekfTelemetry = ekfGetTelemetry();
-
-    // ── CELL TRACKER ──
-    bool newCell = updateCellTracker();
-    if (newCell) {
-      recordWalls(ctGetRow(), ctGetCol(), ctGetHeading(), current_lidars);
-      printCellWalls(ctGetRow(), ctGetCol());
-      printCellState();
-    }
-
-    // <-- ADD THIS GOAL CHECK HERE -->
-    if (ctGetRow() == 4 && ctGetCol() == 4) {
-      applyMotorPWM(0, 0);
-      Serial.println("\n*** GOAL REACHED! ***");
-      currentState = FINISHED;
-    }
-
-    // If finished, do absolutely nothing else.
-    if (currentState == FINISHED) {
-      applyMotorPWM(0, 0);
-      return; 
-    }
 
     prevLeftTicks  = currentLeftTicks;
     prevRightTicks = currentRightTicks;
@@ -393,13 +258,11 @@ void loop() {
         rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
         leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
         currentState        = DRIVING;
-        Serial.println("[RX] Cooldown over — resuming normal drive.");
       } else {
         runDrivingPID(dt_motor, false);
-        // We do NOT return here anymore, allowing the loop to finish cleanly
       }
     } 
-    // ── DRIVING STATE ──
+    // ── DRIVING STATE (SIMPLE RIGHT-HAND RULE) ──
     else {
       bool rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
       bool leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
@@ -409,29 +272,30 @@ void loop() {
       bool shouldDecide = (!frontOpen) || rightGapSustained;
 
       if (shouldDecide) {
-        // applyMotorPWM(0, 0);
-        Serial.println("\n[RX] INTERSECTION / DECISION POINT");
+        Serial.println("\n[RX] INTERSECTION DETECTED");
 
+        // Move to the center of the intersection before turning
         if (frontOpen && PIVOT_OFFSET_MM > 0.0f) {
-          Serial.println("[RX] Pivoting to cell centre...");
           driveForwardDistanceMM(PIVOT_OFFSET_MM);
         }
 
+        // Read sensors one more time from the center of the intersection
         current_lidars = readLidars();
         rightOpen  = (current_lidars.right > WALL_MISSING_THRESHOLD);
         leftOpen   = (current_lidars.left  > WALL_MISSING_THRESHOLD);
         frontOpen  = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
+        // Simple Right-Hand Wall Follower Priority: Right -> Straight -> Left -> U-Turn
         if (rightOpen) {
-          Serial.println("[RX] Decision: TURN RIGHT");
+          Serial.println("[RX] Following Wall: TURN RIGHT");
           turnCW90();
         } else if (frontOpen) {
-          Serial.println("[RX] Decision: GO STRAIGHT");
+          Serial.println("[RX] Following Wall: GO STRAIGHT");
         } else if (leftOpen) {
-          Serial.println("[RX] Decision: TURN LEFT");
+          Serial.println("[RX] Following Wall: TURN LEFT");
           turnACW90();
         } else {
-          Serial.println("[RX] Decision: DEAD END — U-TURN");
+          Serial.println("[RX] Following Wall: DEAD END — U-TURN");
           turn180();
         }
 
@@ -443,6 +307,7 @@ void loop() {
         cooldownStartMs = millis();
 
       } else {
+        // Keep driving straight and maintaining center
         runDrivingPID(dt_motor, !frontOpen);
       }
 
@@ -564,17 +429,15 @@ void printTelemetry() {
   long currRight = rightTicks;
   interrupts();
 
-  char buf[300];
+  char buf[200];
   snprintf(buf, sizeof(buf),
-    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d | Cell: %d/%d/%s",
+    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d",
     baseTargetVelocity,
     currLeft, currRight,
     final_pwm_L, final_pwm_R,
     current_yaw_angle,
-    current_lidars.left, current_lidars.front, current_lidars.right,
-    ctGetRow(), ctGetCol(), headingName(ctGetHeading())
+    current_lidars.left, current_lidars.front, current_lidars.right
   );
 
-  webSocket.broadcastTXT(buf);
   Serial.println(buf);
 }
