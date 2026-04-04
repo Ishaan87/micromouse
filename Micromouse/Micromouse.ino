@@ -98,8 +98,8 @@ float Kp_wall   = Kp_tunnel;
 float Kd_wall   = Kd_tunnel;
 float Ki_wall   = 0.0;
 
-float baseTargetVelocity = 200.0;
-int   basePWM            = 70;
+float baseTargetVelocity = 50.0;
+int   basePWM            = 35;
 
 // Heading management
 float baseTargetYaw    = 0.0;
@@ -220,7 +220,7 @@ void driveForwardDistanceMM(float distanceMM) {
 
     float yaw_err = yawRef - readYawDegrees();
     float corr    = Kp_yaw * yaw_err * 20.0f;
-    applyMotorPWM(100 - (int)corr, 100 + (int)corr);
+    applyMotorPWM(60 - (int)corr, 60 + (int)corr);
     delay(10);
   }
   delay(100); 
