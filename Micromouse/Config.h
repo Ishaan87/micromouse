@@ -46,4 +46,57 @@ const int XSHUT_RIGHT = 3; // Right VL53L0X
 // const float Ki_motor_speed = 0.1;
 // const float Kd_motor_speed = 0.05;
 
+// ==========================================
+// TUNING — SURVEY PHASE
+// (conservative — safety over speed)
+// ==========================================
+float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
+float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
+float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
+
+float Kp_tunnel = 0.12f, Kd_tunnel = 0.08f;
+float Kp_single = 0.06f, Kd_single = 0.12f;
+float Kp_wall   = 0.12f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
+
+float baseTargetVelocity = 50.0f;
+int   basePWM            = 35;
+
+// ==========================================
+// HEADING / YAW MANAGEMENT
+// ==========================================
+float baseTargetYaw    = 0.0f;
+float correction_angle = 0.0f;
+float targetYaw        = 0.0f;
+
+// ==========================================
+// TOLERANCES
+// ==========================================
+float vel_tolerance  = 0.5f;
+float yaw_tolerance  = 0.5f;
+float wall_tolerance = 10.0f;
+
+// ==========================================
+// GEOMETRY — 155mm cells
+// ==========================================
+const int   WALL_THRESHOLD         = 110;
+const float SINGLE_WALL_TARGET_MM  = 63.0f;
+const int   FRONT_STOP_MM          = 120;
+const int   FRONT_HALT_MM          = 40;
+const float CELL_SIZE_NAV_MM       = 155.0f;
+const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;
+const float CENTRE_TOLERANCE_MM    = 15.0f;
+
+// ==========================================
+// EKF / ODOMETRY CONSTANTS
+// ==========================================
+const float TICKS_PER_REV          = 306.0f;
+const float WHEEL_CIRCUMFERENCE_MM  = 144.5f;
+const float TRACK_WIDTH_MM          = 72.0f;
+
+// ==========================================
+// DECISION THRESHOLDS
+// ==========================================
+const int WALL_MISSING_THRESHOLD   = 180;
+const int FRONT_BLOCKED_THRESHOLD  = 70;
+
 #endif

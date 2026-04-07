@@ -123,10 +123,6 @@ extern float Kp_tunnel, Kd_tunnel;
 extern float Kp_single, Kd_single;
 extern float Kp_wall, Kd_wall, Ki_wall;
 extern float wall_tolerance;
-extern float SINGLE_WALL_TARGET_MM; // declared as const float in ino — use a local copy
-extern const int WALL_THRESHOLD;
-extern const int WALL_MISSING_THRESHOLD;
-
 // ============================================================
 // INTERNAL HELPERS
 // ============================================================
@@ -310,11 +306,11 @@ static void sv_runWallPID(float dt) {
   } else if (hasLeft) {
     Kp_wall    = Kp_single;
     Kd_wall    = Kd_single;
-    error_wall = -(current_lidars.left - 63.0f);   // SINGLE_WALL_TARGET_MM
+    error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
   } else if (hasRight) {
     Kp_wall    = Kp_single;
     Kd_wall    = Kd_single;
-    error_wall = (current_lidars.right - 63.0f);
+    error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
   } else {
     correction_angle = 0.0f; integral_wall = 0.0f; prev_error_wall = 0.0f;
     targetYaw        = baseTargetYaw;

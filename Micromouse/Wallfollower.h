@@ -6,6 +6,38 @@
 #include "Motors.h"
 #include "Turns.h"
 
+extern float baseTargetYaw;
+extern float targetYaw;
+extern float integral_yaw;
+extern float prev_error_yaw;
+extern float current_yaw_angle;
+extern float baseTargetVelocity;
+extern float vel_tolerance;
+extern float yaw_tolerance;
+extern float integral_vel_L;
+extern float integral_vel_R;
+extern float prev_error_vel_L;
+extern float prev_error_vel_R;
+extern float Kp_yaw;
+extern float Ki_yaw;
+extern float Kd_yaw;
+extern float Kp_vel_L;
+extern float Ki_vel_L;
+extern float Kd_vel_L;
+extern float Kp_vel_R;
+extern float Ki_vel_R;
+extern float Kd_vel_R;
+extern int basePWM;
+extern int final_pwm_L;
+extern int final_pwm_R;
+extern long prevLeftTicks;
+extern long prevRightTicks;
+extern DistanceData current_lidars;
+extern EKFTelemetry ekfTelemetry;
+
+void runWallPIDLoop(float dt);
+float frontBrakeScale();
+
 // ==========================================
 // WALL FOLLOWER
 // Implements the right-hand rule maze
@@ -33,16 +65,8 @@
 // ==========================================
 // GOAL CELL  —  adjust to your maze target
 // ==========================================
-const int GOAL_ROW = 4;
-const int GOAL_COL = 4;
-
-// ==========================================
-// TURN HELPERS
-// Each wrapper calls the blocking Turns.h
-// function then re-syncs baseTargetYaw to the
-// yaw the robot actually settled at, so the
-// yaw PID doesn't fight the new heading.
-// ==========================================
+const int WF_GOAL_ROW = 4;
+const int WF_GOAL_COL = 4;
 
 void wf_turnRight() {
   turnCW90();
@@ -90,7 +114,7 @@ static uint32_t wf_startTimeMs  = 0;
 // GOAL CHECK
 // ==========================================
 inline bool wf_atGoal() {
-  return (ctGetRow() == GOAL_ROW && ctGetCol() == GOAL_COL);
+  return (ctGetRow() == WF_GOAL_ROW && ctGetCol() == WF_GOAL_COL);
 }
 
 // ==========================================
@@ -105,7 +129,7 @@ void wf_printStats() {
   Serial.println("╔══════════════════════════════════╗");
   Serial.println("║      WALL FOLLOWER — GOAL!       ║");
   Serial.println("╚══════════════════════════════════╝");
-  Serial.printf("  Goal cell     : (%d, %d)\n", GOAL_ROW, GOAL_COL);
+  Serial.printf("  Goal cell     : (%d, %d)\n", WF_GOAL_ROW, WF_GOAL_COL);
   Serial.printf("  Cells visited : %d\n",  wf_cellsVisited);
   Serial.printf("  Turns made    : %d\n",  wf_turnsMade);
   Serial.printf("  Elapsed time  : %.2f s\n", elapsedMs / 1000.0f);
@@ -126,7 +150,7 @@ void initWallFollower() {
   wf_turnsMade    = 0;
   wf_startTimeMs  = millis();
   Serial.println("[WF] Wall follower initialised — right-hand rule active.");
-  Serial.printf("[WF] Goal: (%d, %d)\n", GOAL_ROW, GOAL_COL);
+  Serial.printf("[WF] Goal: (%d, %d)\n", WF_GOAL_ROW, WF_GOAL_COL);
 }
 
 // ==========================================
@@ -247,8 +271,6 @@ void wallFollowerUpdate(float dt_motor, float dt_lidar, bool runMotor, bool runL
     }
 
     // ── standard yaw + velocity PID (unchanged from your original) ──
-    maybeFinalizeDistance(currentLeftTicks, currentRightTicks);
-
     float error_yaw = targetYaw - current_yaw_angle;
     if (abs(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
 

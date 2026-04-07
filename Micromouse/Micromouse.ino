@@ -10,8 +10,6 @@
 #include "CellTracker.h"
 #include "WallMap.h"
 #include "Turns.h"
-#include "Floodfill.h"   // ← new
-#include "Solver.h"      // ← new
 
 // ==========================================
 // WIRELESS WEB SERVER SETTINGS
@@ -44,6 +42,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
         .connected { color: #10b981 !important; }
         .error { color: #ef4444 !important; }
+        pre { margin: 0; text-align: left; white-space: pre-wrap; font-family: Consolas, monospace; font-size: 0.95rem; line-height: 1.35; color: #e2e8f0; }
     </style>
 </head>
 <body>
@@ -57,6 +56,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="card" style="grid-column: 1 / -1;"><h3>Encoder Ticks (Left / Right)</h3><div id="val-enc" class="val dual">0 / 0</div></div>
         <div class="card" style="grid-column: 1 / -1;"><h3>PWM Power (Left / Right)</h3><div id="val-pwm" class="val dual">0 / 0</div></div>
         <div class="card" style="grid-column: 1 / -1;"><h3>Cell (Row / Col / Heading)</h3><div id="val-cell" class="val dual">0 / 0 / N</div></div>
+        <div class="card" style="grid-column: 1 / -1;"><h3>Explored Maze</h3><pre id="maze-output">Maze data will appear here after survey completes.</pre></div>
     </div>
     <script>
         var gateway = `ws://${window.location.hostname}:81/`;
@@ -68,6 +68,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             websocket.onclose   = () => { document.getElementById('status').innerText = "Disconnected. Reconnecting..."; document.getElementById('status').className = "error"; setTimeout(initWebSocket, 2000); };
             websocket.onmessage = (event) => {
                 let line = event.data;
+                if (line.startsWith("MAZE:")) {
+                    document.getElementById('maze-output').textContent = line.substring(5).trim();
+                    return;
+                }
                 if (!line.includes("Target:")) return;
                 try {
                     const parts = line.split('|');
@@ -86,87 +90,9 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// ==========================================
-// PHASE DEFINITIONS
-// ==========================================
-// The robot runs through these phases in order:
-//
-//  PHASE_SURVEY  — right-hand-rule traversal, building the wall map
-//  PHASE_RETURN  — floodfill back to (0,0) using the completed map
-//  PHASE_SOLVE   — optimised speed-run along the shortest path to goal
-//  PHASE_DONE    — finished; robot stops
-//
-// Transition logic:
-//  SURVEY ends when the goal cell is reached (or all reachable
-//  cells are visited — you can add that check later).
-//  RETURN ends when the robot reaches (0,0).
-//  SOLVE ends when the solver reports solverDone().
-// ==========================================
-enum Phase {
-  PHASE_SURVEY,
-  PHASE_RETURN,
-  PHASE_SOLVE,
-  PHASE_DONE
-};
-
-Phase currentPhase = PHASE_SURVEY;
-
-// Goal coordinates (used for both survey target and solve destination)
+// Goal coordinates for survey completion
 const int GOAL_ROW = 4;
 const int GOAL_COL = 4;
-
-// ==========================================
-// TUNING — SURVEY PHASE
-// (conservative — safety over speed)
-// ==========================================
-float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
-float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
-float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
-
-float Kp_tunnel = 0.12f, Kd_tunnel = 0.08f;
-float Kp_single = 0.06f, Kd_single = 0.12f;
-float Kp_wall   = 0.12f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
-
-float baseTargetVelocity = 50.0f;
-int   basePWM            = 35;
-
-// ==========================================
-// HEADING / YAW MANAGEMENT
-// ==========================================
-float baseTargetYaw    = 0.0f;
-float correction_angle = 0.0f;
-float targetYaw        = 0.0f;
-
-// ==========================================
-// TOLERANCES
-// ==========================================
-float vel_tolerance  = 0.5f;
-float yaw_tolerance  = 0.5f;
-float wall_tolerance = 10.0f;
-
-// ==========================================
-// GEOMETRY — 155mm cells
-// ==========================================
-const int   WALL_THRESHOLD         = 110;
-const float SINGLE_WALL_TARGET_MM  = 63.0f;
-const int   FRONT_STOP_MM          = 120;
-const int   FRONT_HALT_MM          = 60;
-const float CELL_SIZE_NAV_MM       = 155.0f;
-const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;
-const float CENTRE_TOLERANCE_MM    = 15.0f;
-
-// ==========================================
-// EKF / ODOMETRY CONSTANTS
-// ==========================================
-const float TICKS_PER_REV          = 306.0f;
-const float WHEEL_CIRCUMFERENCE_MM  = 144.5f;
-const float TRACK_WIDTH_MM          = 72.0f;
-
-// ==========================================
-// DECISION THRESHOLDS
-// ==========================================
-const int WALL_MISSING_THRESHOLD   = 180;
-const int FRONT_BLOCKED_THRESHOLD  = 70;
 
 // ==========================================
 // LOOP TIMING
@@ -180,7 +106,7 @@ unsigned long lastLidarTime = 0;
 unsigned long lastPrintTime = 0;
 
 // ==========================================
-// SHARED STATE (read by Solver.h via extern)
+// SHARED STATE
 // ==========================================
 float integral_vel_L = 0, integral_vel_R = 0;
 float prev_error_vel_L = 0, prev_error_vel_R = 0;
@@ -194,20 +120,20 @@ int  final_pwm_L    = 0;
 int  final_pwm_R    = 0;
 
 DistanceData current_lidars;
-EKFTelemetry ekfTelemetry;
+EKFTelemetry ekfTelemetry = {0.0f, 0.0f, 0.0f};
 
 // ==========================================
 // SURVEY-PHASE STATE MACHINE
 // ==========================================
 enum BotState {
   DRIVING,
-  TURN_COOLDOWN,
-  FINISHED
+  TURN_COOLDOWN
 };
 
 BotState      surveyState      = DRIVING;
 unsigned long cooldownStartMs  = 0;
 const unsigned long TURN_COOLDOWN_MS = 800;
+bool surveyComplete = false;
 
 bool rightWallWasPresent = true;
 bool leftWallWasPresent  = true;
@@ -221,11 +147,11 @@ void printTelemetry();
 void resetPIDIntegrals();
 void resetWallPID();
 float frontBrakeScale();
-void alignToCellCentre();
+float wrapAngleDegrees(float angle);
+String buildMazeWebReport();
+void broadcastMazeWebReport();
 void executeDecisionAndTurn();
-void runSurveyUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar);
-void transitionToReturn();
-void transitionToSolve();
+void runSurveyUpdate(float dt_motor, bool doMotor);
 
 // ==========================================
 // RESET HELPERS
@@ -254,43 +180,33 @@ float frontBrakeScale() {
   return (float)(d - FRONT_HALT_MM) / (float)(FRONT_STOP_MM - FRONT_HALT_MM);
 }
 
-// ==========================================
-// ALIGN TO CELL CENTRE (survey phase)
-// Uses encoder odometry to reach exact midpoint
-// ==========================================
-void alignToCellCentre() {
-  EKFState s = ekfGetState();
-  float posInCell = fmodf(fabsf(s.x_mm), CELL_SIZE_NAV_MM);
-  float remaining = CELL_HALF_MM - posInCell;
+float wrapAngleDegrees(float angle) {
+  while (angle > 180.0f) angle -= 360.0f;
+  while (angle < -180.0f) angle += 360.0f;
+  return angle;
+}
 
-  if (remaining <= CENTRE_TOLERANCE_MM) {
-    Serial.printf("[ALN] Already centred (posInCell=%.1f). Skipping.\n", posInCell);
-    return;
+String buildMazeWebReport() {
+  String report = "Visited maze cells\n";
+  for (int r = MAZE_SIZE - 1; r >= 0; --r) {
+    for (int c = 0; c < MAZE_SIZE; ++c) {
+      if (!wallMap[r][c].visited) {
+        report += ".";
+      } else {
+        report += wallMap[r][c].north ? "N" : "-";
+        report += wallMap[r][c].east  ? "E" : "-";
+        report += wallMap[r][c].south ? "S" : "-";
+        report += wallMap[r][c].west  ? "W" : "-";
+      }
+      if (c < MAZE_SIZE - 1) report += "  ";
+    }
+    if (r > 0) report += "\n";
   }
+  return report;
+}
 
-  Serial.printf("[ALN] Driving %.1fmm to centre.\n", remaining);
-  float targetTicks = (remaining / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV;
-
-  noInterrupts();
-  long startLeft  = leftTicks;
-  long startRight = rightTicks;
-  interrupts();
-
-  float yawRef = readYawDegrees();
-
-  while (true) {
-    noInterrupts();
-    long cL = leftTicks, cR = rightTicks;
-    interrupts();
-
-    float moved = ((cL - startLeft) + (cR - startRight)) / 2.0f;
-    if (moved >= targetTicks) { applyMotorPWM(0, 0); delay(50); break; }
-
-    float yaw_err = yawRef - readYawDegrees();
-    float corr    = Kp_yaw * yaw_err * 20.0f;
-    applyMotorPWM(55 - (int)corr, 55 + (int)corr);
-    delay(10);
-  }
+void broadcastMazeWebReport() {
+  webSocket.broadcastTXT("MAZE:" + buildMazeWebReport());
 }
 
 // ==========================================
@@ -300,6 +216,7 @@ void alignToCellCentre() {
 void executeDecisionAndTurn() {
   current_lidars = readLidars();
   delay(20);
+  float turnDeltaDeg = 0.0f;
 
   bool rightOpen = (current_lidars.right > WALL_MISSING_THRESHOLD);
   bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
@@ -310,13 +227,13 @@ void executeDecisionAndTurn() {
     frontOpen ? "open" : "wall",
     leftOpen  ? "open" : "wall");
 
-  if      (rightOpen) { Serial.println("[DEC] TURN RIGHT");        turnCW90();  }
-  else if (frontOpen) { Serial.println("[DEC] STRAIGHT");                       }
-  else if (leftOpen)  { Serial.println("[DEC] TURN LEFT");         turnACW90(); }
-  else                { Serial.println("[DEC] DEAD END — U-TURN"); turn180();   }
+  if      (rightOpen) { Serial.println("[DEC] TURN RIGHT");        turnCW90();  turnDeltaDeg = -90.0f;  }
+  else if (frontOpen) { Serial.println("[DEC] STRAIGHT");                                            }
+  else if (leftOpen)  { Serial.println("[DEC] TURN LEFT");         turnACW90(); turnDeltaDeg = 90.0f;   }
+  else                { Serial.println("[DEC] DEAD END — U-TURN"); turn180();   turnDeltaDeg = -180.0f; }
 
   delay(100);
-  baseTargetYaw = readYawDegrees();
+  baseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
   targetYaw     = baseTargetYaw;
   resetPIDIntegrals();
   resetWallPID();
@@ -332,7 +249,12 @@ void executeDecisionAndTurn() {
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED: Serial.printf("[WS] #%u Disconnected\n", num); break;
-    case WStype_CONNECTED:    Serial.printf("[WS] #%u Connected\n",    num); break;
+    case WStype_CONNECTED:
+      Serial.printf("[WS] #%u Connected\n",    num);
+      if (surveyComplete) {
+        webSocket.sendTXT(num, "MAZE:" + buildMazeWebReport());
+      }
+      break;
   }
 }
 
@@ -369,8 +291,6 @@ void setup() {
 
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
   ekfInit(0.0f, 0.0f, 0.0f);
-  ekfTelemetry = ekfGetTelemetry();
-
   initCellTracker();
   initWallMap();
 
@@ -386,10 +306,10 @@ void setup() {
   unsigned long now = millis();
   lastLoopTime = lastLidarTime = lastPrintTime = now;
 
-  currentPhase = PHASE_SURVEY;
-  surveyState  = DRIVING;
+  surveyState    = DRIVING;
+  surveyComplete = false;
 
-  Serial.println("Setup complete — PHASE: SURVEY");
+  Serial.println("Setup complete — survey mode only");
 }
 
 // ==========================================
@@ -414,51 +334,19 @@ void loop() {
     lastLidarTime  = now;
     current_lidars = readLidars();
 
-    // Wall PID only during survey straight-driving
-    if (currentPhase == PHASE_SURVEY && surveyState == DRIVING) {
+    if (!surveyComplete && surveyState == DRIVING) {
       runWallPIDLoop(dt_lidar);
     }
-    // Solver handles its own wall PID internally
   }
 
   if (doMotor) {
     float dt_motor = (now - lastLoopTime) / 1000.0f;
     lastLoopTime   = now;
 
-    switch (currentPhase) {
-
-      // ──────────────────────────────────────
-      case PHASE_SURVEY:
-        runSurveyUpdate(dt_motor, 0, true, false);
-        break;
-
-      // ──────────────────────────────────────
-      // RETURN phase: floodfill path from
-      // current position back to (0,0).
-      // Reuses the solver with a different goal.
-      case PHASE_RETURN:
-        solverUpdate(dt_motor, 0, true, false);
-        if (solverDone()) {
-          Serial.println("[PHASE] RETURN complete → transitioning to SOLVE");
-          transitionToSolve();
-        }
-        break;
-
-      // ──────────────────────────────────────
-      case PHASE_SOLVE:
-        solverUpdate(dt_motor, 0, true, false);
-        if (solverDone()) {
-          applyMotorPWM(0, 0);
-          currentPhase = PHASE_DONE;
-          Serial.println("[PHASE] SOLVE complete — ALL DONE!");
-          printWallMapASCII();
-        }
-        break;
-
-      // ──────────────────────────────────────
-      case PHASE_DONE:
-        applyMotorPWM(0, 0);
-        break;
+    if (surveyComplete) {
+      applyMotorPWM(0, 0);
+    } else {
+      runSurveyUpdate(dt_motor, true);
     }
   }
 }
@@ -470,7 +358,7 @@ void loop() {
 // but now neatly encapsulated so the main
 // loop can switch cleanly to other phases.
 // ==========================================
-void runSurveyUpdate(float dt_motor, float /*dt_lidar*/, bool doMotor, bool /*doLidar*/) {
+void runSurveyUpdate(float dt_motor, bool doMotor) {
   if (!doMotor) return;
 
   // EKF tick
@@ -490,15 +378,15 @@ void runSurveyUpdate(float dt_motor, float /*dt_lidar*/, bool doMotor, bool /*do
     printCellWalls(ctGetRow(), ctGetCol());
     printCellState();
 
-    // ── SURVEY GOAL CHECK ──
-    // Survey ends when we first reach the goal cell.
-    // At that point the wall map is good enough to plan a return path.
     if (ctGetRow() == GOAL_ROW && ctGetCol() == GOAL_COL) {
       applyMotorPWM(0, 0);
-      Serial.println("\n[SURVEY] Goal cell reached! Transitioning to RETURN phase.");
+      surveyComplete = true;
+      surveyState    = TURN_COOLDOWN;
+      Serial.println("\n[SURVEY] Goal cell reached! Survey complete.");
+      printWallMapASCII();
+      broadcastMazeWebReport();
       prevLeftTicks  = curL;
       prevRightTicks = curR;
-      transitionToReturn();
       return;
     }
   }
@@ -528,7 +416,6 @@ void runSurveyUpdate(float dt_motor, float /*dt_lidar*/, bool doMotor, bool /*do
 
     if (mustDecide) {
       Serial.println("[SURVEY] Decision point");
-      alignToCellCentre();
       executeDecisionAndTurn();
       surveyState    = TURN_COOLDOWN;
       cooldownStartMs = millis();
@@ -539,96 +426,6 @@ void runSurveyUpdate(float dt_motor, float /*dt_lidar*/, bool doMotor, bool /*do
     rightWallWasPresent = !rightOpen;
     leftWallWasPresent  = !leftOpen;
   }
-}
-
-// ==========================================
-// PHASE TRANSITIONS
-// ==========================================
-
-// Called when survey goal is reached.
-// Computes a return path from current cell → (0,0)
-// and hands off to the solver.
-void transitionToReturn() {
-  Serial.println("[PHASE] Computing RETURN path...");
-
-  int curRow = ctGetRow();
-  int curCol = ctGetCol();
-
-  bool ok = ffComputePath(curRow, curCol, 0, 0);
-  if (!ok) {
-    Serial.println("[PHASE] ERROR: No return path found! Staying put.");
-    currentPhase = PHASE_DONE;
-    return;
-  }
-
-  ffPrintDistGrid();
-
-  // Reset odometry and PID for the new run
-  resetPIDIntegrals();
-  resetWallPID();
-  resetEncoders();
-  prevLeftTicks = prevRightTicks = 0;
-
-  // Reset EKF to current cell centre (good-enough re-localisation)
-  float cellCentreX = (curRow + 0.5f) * CELL_SIZE_NAV_MM;
-  float cellCentreY = (curCol + 0.5f) * CELL_SIZE_NAV_MM;
-  ekfInit(cellCentreX, cellCentreY, ekfGetState().theta_rad);
-
-  solverInit(ctGetHeading());
-  currentPhase = PHASE_RETURN;
-  Serial.println("[PHASE] RETURN started.");
-}
-
-// Called when the return run reaches (0,0).
-// Waits briefly, re-orients to NORTH if needed,
-// then computes the optimal solve path and starts it.
-void transitionToSolve() {
-  Serial.println("[PHASE] At origin. Preparing SOLVE run...");
-
-  // Orient to NORTH before solving so the path headings align
-  MazeHeading h = ctGetHeading();
-  if (h != HEADING_NORTH) {
-    Serial.printf("[PHASE] Re-orienting from %s to NORTH\n", headingName(h));
-    // Compute how many right turns needed to face NORTH
-    int turns = ((int)HEADING_NORTH - (int)h + 4) % 4;
-    for (int i = 0; i < turns; i++) {
-      if (turns == 1)      turnCW90();   // 1 right turn
-      else if (turns == 3) turnACW90();  // 1 left turn (== 3 rights)
-      else                 turn180();    // 2 turns
-      delay(200);
-      break;  // one call handles it — turn functions do full angles
-    }
-    delay(200);
-  }
-
-  baseTargetYaw = readYawDegrees();
-  targetYaw     = baseTargetYaw;
-  resetPIDIntegrals();
-  resetWallPID();
-  resetEncoders();
-  prevLeftTicks = prevRightTicks = 0;
-
-  // Re-init EKF at origin
-  ekfInit(0.0f, 0.0f, 0.0f);
-  initCellTracker();
-
-  // Compute shortest path from (0,0) to goal
-  bool ok = ffComputePath(0, 0, GOAL_ROW, GOAL_COL);
-  if (!ok) {
-    Serial.println("[PHASE] ERROR: No solve path found!");
-    currentPhase = PHASE_DONE;
-    return;
-  }
-
-  ffPrintDistGrid();
-
-  // 3-second pause so you can see the serial output before the fast run
-  Serial.println("[PHASE] SOLVE starts in 3 seconds...");
-  delay(3000);
-
-  solverInit(HEADING_NORTH);
-  currentPhase = PHASE_SOLVE;
-  Serial.println("[PHASE] SOLVE started — go!");
 }
 
 // ==========================================
@@ -729,11 +526,6 @@ void printTelemetry() {
   long cL = leftTicks, cR = rightTicks;
   interrupts();
 
-  const char* phaseStr =
-    (currentPhase == PHASE_SURVEY) ? "SURVEY" :
-    (currentPhase == PHASE_RETURN) ? "RETURN" :
-    (currentPhase == PHASE_SOLVE)  ? "SOLVE"  : "DONE";
-
   char buf[320];
   snprintf(buf, sizeof(buf),
     "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d | Cell: %d/%d/%s | Phase: %s",
@@ -743,7 +535,7 @@ void printTelemetry() {
     current_yaw_angle,
     current_lidars.left, current_lidars.front, current_lidars.right,
     ctGetRow(), ctGetCol(), headingName(ctGetHeading()),
-    phaseStr
+    surveyComplete ? "SURVEY DONE" : "SURVEY"
   );
 
   webSocket.broadcastTXT(buf);
