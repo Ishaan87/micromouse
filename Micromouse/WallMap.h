@@ -19,7 +19,7 @@
 // to true in initWallMap().
 // ==========================================
 
-const int MAZE_SIZE = 5;
+const int MAZE_SIZE = 6;
 
 // ==========================================
 // WALL DETECTION THRESHOLD

@@ -67,8 +67,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 // Goal coordinates for survey completion
-const int GOAL_ROW = 4;
-const int GOAL_COL = 4;
+const int GOAL_ROW = 5;
+const int GOAL_COL = 5;
 
 // ==========================================
 // LOOP TIMING
@@ -142,6 +142,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor);
 // RESET HELPERS
 // ==========================================
 void resetPIDIntegrals() {
+
   integral_vel_L = 0; prev_error_vel_L = 0;
   integral_vel_R = 0; prev_error_vel_R = 0;
   integral_yaw   = 0; prev_error_yaw   = 0;
