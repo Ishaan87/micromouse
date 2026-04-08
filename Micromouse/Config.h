@@ -80,7 +80,7 @@ float wall_tolerance = 10.0f;
 // ==========================================
 const int   WALL_THRESHOLD         = 110;
 const float SINGLE_WALL_TARGET_MM  = 63.0f;
-const int   FRONT_STOP_MM          = 120;
+const int   FRONT_STOP_MM          = 100;
 const int   FRONT_HALT_MM          = 45;
 const float CELL_SIZE_NAV_MM       = 160.0f;
 const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;

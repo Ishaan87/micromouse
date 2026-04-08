@@ -18,7 +18,7 @@
 // ==========================================
 // CONSTANTS
 // ==========================================
-const float CELL_SIZE_MM        = 180.0f;  // Change to 155.0f if your physical maze uses smaller cells
+const float CELL_SIZE_MM        = 155.0f;  // Change to 155.0f if your physical maze uses smaller cells
 const float CELL_ENTRY_MARGIN   = 20.0f;   // must be this far past a cell boundary
                                             // before a transition is confirmed
                                             // (prevents false triggers near boundaries)
@@ -60,9 +60,9 @@ inline MazeHeading headingFromTheta(float theta_rad) {
 
   // Each quadrant is 90° wide, centred on 0/90/180/270
   if (deg <  45.0f || deg >= 315.0f) return HEADING_NORTH;
-  if (deg <  135.0f)                 return HEADING_EAST;
+  if (deg <  135.0f)                 return HEADING_WEST;
   if (deg <  225.0f)                 return HEADING_SOUTH;
-  return HEADING_WEST;
+  return HEADING_EAST;
 }
 
 inline const char* headingName(MazeHeading h) {
@@ -104,8 +104,8 @@ bool updateCellTracker() {
   // We use (pos + margin) / cell_size so the
   // transition fires slightly inside the new cell,
   // not right on the boundary edge.
-  int newRow = (int)floorf((s.x_mm) / CELL_SIZE_MM);
-  int newCol = (int)floorf((s.y_mm + (CELL_SIZE_MM / 2.0f)) / CELL_SIZE_MM);
+  int newRow = (int)floorf(s.x_mm / CELL_SIZE_MM);
+  int newCol = (int)floorf(-s.y_mm / CELL_SIZE_MM);
   // Note: col is centred so that small lateral
   // drift near zero doesn't flip the column.
 
