@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
+#include <stdarg.h>
 #include "Config.h"
 #include "Motors.h"
 #include "Encoders.h"
@@ -29,60 +30,35 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Micromouse Dashboard</title>
+    <title>Micromouse Serial Log</title>
     <style>
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; margin: 0; padding: 40px 20px; }
-        h1 { color: #38bdf8; letter-spacing: 1px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; max-width: 900px; margin: 30px auto; }
-        .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); border: 1px solid #334155; }
-        h3 { margin-top: 0; color: #94a3b8; font-size: 1rem; text-transform: uppercase; }
-        .val { font-size: 3.5rem; font-weight: 700; color: #10b981; margin: 10px 0 0 0; font-variant-numeric: tabular-nums; }
-        .val.dual { font-size: 2.5rem; color: #38bdf8; }
-        .phase { font-size: 1.5rem; font-weight: 700; color: #f59e0b; }
-        #status { margin-top: 20px; font-weight: 600; font-size: 1.2rem; color: #f59e0b; }
-        .connected { color: #10b981 !important; }
-        .error { color: #ef4444 !important; }
-        pre { margin: 0; text-align: left; white-space: pre-wrap; font-family: Consolas, monospace; font-size: 0.95rem; line-height: 1.35; color: #e2e8f0; }
+        body { margin: 0; padding: 12px; background: #000; color: #fff; font-family: Consolas, monospace; }
+        pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.35; }
     </style>
 </head>
 <body>
-    <h1>Micromouse Control Center</h1>
-    <div id="status">Connecting to Bot...</div>
-    <div class="grid">
-        <div class="card" style="grid-column: 1 / -1;"><h3>Phase</h3><div id="val-phase" class="val phase">SURVEY</div></div>
-        <div class="card"><h3>Target Velocity</h3><div id="val-target" class="val">0.0</div></div>
-        <div class="card"><h3>Current Yaw</h3><div id="val-yaw" class="val">0.00°</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>LiDAR (Left / Front / Right)</h3><div id="val-lidar" class="val dual">0 / 0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>Encoder Ticks (Left / Right)</h3><div id="val-enc" class="val dual">0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>PWM Power (Left / Right)</h3><div id="val-pwm" class="val dual">0 / 0</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>Cell (Row / Col / Heading)</h3><div id="val-cell" class="val dual">0 / 0 / N</div></div>
-        <div class="card" style="grid-column: 1 / -1;"><h3>Explored Maze</h3><pre id="maze-output">Maze data will appear here after survey completes.</pre></div>
-    </div>
+    <pre id="serial-log"></pre>
     <script>
         var gateway = `ws://${window.location.hostname}:81/`;
         var websocket;
+        const maxLogLines = 250;
         window.addEventListener('load', initWebSocket);
+        function appendLogLine(line) {
+            const log = document.getElementById('serial-log');
+            const lines = log.textContent === '' ? [] : log.textContent.split('\n');
+            lines.push(line);
+            while (lines.length > maxLogLines) lines.shift();
+            log.textContent = lines.join('\n');
+            log.parentElement.scrollTop = log.parentElement.scrollHeight;
+        }
         function initWebSocket() {
             websocket = new WebSocket(gateway);
-            websocket.onopen    = () => { document.getElementById('status').innerText = "Status: Live"; document.getElementById('status').className = "connected"; };
-            websocket.onclose   = () => { document.getElementById('status').innerText = "Disconnected. Reconnecting..."; document.getElementById('status').className = "error"; setTimeout(initWebSocket, 2000); };
+            websocket.onopen    = () => { };
+            websocket.onclose   = () => { setTimeout(initWebSocket, 2000); };
             websocket.onmessage = (event) => {
                 let line = event.data;
-                if (line.startsWith("MAZE:")) {
-                    document.getElementById('maze-output').textContent = line.substring(5).trim();
-                    return;
-                }
-                if (!line.includes("Target:")) return;
-                try {
-                    const parts = line.split('|');
-                    document.getElementById('val-target').innerText = parts[0].split(':')[1].trim();
-                    document.getElementById('val-enc').innerText    = parts[1].split(':')[1].trim();
-                    document.getElementById('val-pwm').innerText    = parts[2].split(':')[1].trim();
-                    document.getElementById('val-yaw').innerText    = parts[3].split(':')[1].trim() + "°";
-                    document.getElementById('val-lidar').innerText  = parts[4].split(':')[1].trim() + " mm";
-                    document.getElementById('val-cell').innerText   = parts[5].split(':')[1].trim();
-                    document.getElementById('val-phase').innerText  = parts[6] ? parts[6].split(':')[1].trim() : '';
-                } catch (e) { }
+                if (line.startsWith("MAZE:")) line = line.substring(5).trim();
+                appendLogLine(line);
             };
         }
     </script>
@@ -104,6 +80,11 @@ const int PRINT_INTERVAL_MS = 100;
 unsigned long lastLoopTime  = 0;
 unsigned long lastLidarTime = 0;
 unsigned long lastPrintTime = 0;
+
+const int LOG_HISTORY_SIZE = 300;
+String logHistory[LOG_HISTORY_SIZE];
+int logHistoryStart = 0;
+int logHistoryCount = 0;
 
 // ==========================================
 // SHARED STATE
@@ -148,6 +129,10 @@ void resetPIDIntegrals();
 void resetWallPID();
 float frontBrakeScale();
 float wrapAngleDegrees(float angle);
+void appendLogHistory(const String &line);
+void replayLogHistory(uint8_t clientNum);
+void logLine(const String &line);
+void logPrintf(const char *format, ...);
 String buildMazeWebReport();
 void broadcastMazeWebReport();
 void executeDecisionAndTurn();
@@ -186,6 +171,39 @@ float wrapAngleDegrees(float angle) {
   return angle;
 }
 
+void appendLogHistory(const String &line) {
+  int writeIndex = (logHistoryStart + logHistoryCount) % LOG_HISTORY_SIZE;
+  logHistory[writeIndex] = line;
+  if (logHistoryCount < LOG_HISTORY_SIZE) {
+    logHistoryCount++;
+  } else {
+    logHistoryStart = (logHistoryStart + 1) % LOG_HISTORY_SIZE;
+  }
+}
+
+void replayLogHistory(uint8_t clientNum) {
+  for (int i = 0; i < logHistoryCount; ++i) {
+    int index = (logHistoryStart + i) % LOG_HISTORY_SIZE;
+    webSocket.sendTXT(clientNum, logHistory[index]);
+  }
+}
+
+void logLine(const String &line) {
+  appendLogHistory(line);
+  Serial.println(line);
+  String message = line;
+  webSocket.broadcastTXT(message);
+}
+
+void logPrintf(const char *format, ...) {
+  char buffer[384];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
+  logLine(String(buffer));
+}
+
 String buildMazeWebReport() {
   String report = "Visited maze cells\n";
   for (int r = MAZE_SIZE - 1; r >= 0; --r) {
@@ -206,7 +224,7 @@ String buildMazeWebReport() {
 }
 
 void broadcastMazeWebReport() {
-  webSocket.broadcastTXT("MAZE:" + buildMazeWebReport());
+  logLine("MAZE:" + buildMazeWebReport());
 }
 
 // ==========================================
@@ -222,15 +240,15 @@ void executeDecisionAndTurn() {
   bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
   bool leftOpen  = (current_lidars.left  > WALL_MISSING_THRESHOLD);
 
-  Serial.printf("[DEC] R=%s F=%s L=%s\n",
+  logPrintf("[DEC] R=%s F=%s L=%s",
     rightOpen ? "open" : "wall",
     frontOpen ? "open" : "wall",
     leftOpen  ? "open" : "wall");
 
-  if      (rightOpen) { Serial.println("[DEC] TURN RIGHT");        turnCW90();  turnDeltaDeg = -90.0f;  }
-  else if (frontOpen) { Serial.println("[DEC] STRAIGHT");                                            }
-  else if (leftOpen)  { Serial.println("[DEC] TURN LEFT");         turnACW90(); turnDeltaDeg = 90.0f;   }
-  else                { Serial.println("[DEC] DEAD END — U-TURN"); turn180();   turnDeltaDeg = -180.0f; }
+  if      (rightOpen) { logLine("[DEC] TURN RIGHT");        turnCW90();  turnDeltaDeg = -90.0f;  }
+  else if (frontOpen) { logLine("[DEC] STRAIGHT");                                            }
+  else if (leftOpen)  { logLine("[DEC] TURN LEFT");         turnACW90(); turnDeltaDeg = 90.0f;   }
+  else                { logLine("[DEC] DEAD END - U-TURN"); turn180();   turnDeltaDeg = -180.0f; }
 
   delay(100);
   baseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
@@ -248,12 +266,12 @@ void executeDecisionAndTurn() {
 // ==========================================
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
-    case WStype_DISCONNECTED: Serial.printf("[WS] #%u Disconnected\n", num); break;
+    case WStype_DISCONNECTED:
+      Serial.printf("[WS] #%u Disconnected\n", num);
+      break;
     case WStype_CONNECTED:
-      Serial.printf("[WS] #%u Connected\n",    num);
-      if (surveyComplete) {
-        webSocket.sendTXT(num, "MAZE:" + buildMazeWebReport());
-      }
+      Serial.printf("[WS] #%u Connected\n", num);
+      replayLogHistory(num);
       break;
   }
 }
@@ -271,20 +289,20 @@ void setup() {
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 
-  Serial.print("AP IP: "); Serial.println(WiFi.softAPIP());
-  Serial.println("=================================");
-  Serial.println("  MICROMOUSE STARTUP");
-  Serial.println("=================================");
+  logLine(String("AP IP: ") + WiFi.softAPIP().toString());
+  logLine("=================================");
+  logLine("  MICROMOUSE STARTUP");
+  logLine("=================================");
 
   initMotors();
   initEncoders();
   initSensors();
   delay(5000);
 
-  Serial.println("[!] Calibrating gyro...");
+  logLine("[!] Calibrating gyro...");
   delay(2000);
   calibrateGyro();
-  Serial.println("Gyro OK.");
+  logLine("Gyro OK.");
 
   resetYaw();
   current_yaw_angle = baseTargetYaw = targetYaw = 0.0f;
@@ -309,7 +327,7 @@ void setup() {
   surveyState    = DRIVING;
   surveyComplete = false;
 
-  Serial.println("Setup complete — survey mode only");
+  logLine("Setup complete - survey mode only");
 }
 
 // ==========================================
@@ -382,7 +400,8 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
       applyMotorPWM(0, 0);
       surveyComplete = true;
       surveyState    = TURN_COOLDOWN;
-      Serial.println("\n[SURVEY] Goal cell reached! Survey complete.");
+      logLine("");
+      logLine("[SURVEY] Goal cell reached! Survey complete.");
       printWallMapASCII();
       broadcastMazeWebReport();
       prevLeftTicks  = curL;
@@ -401,7 +420,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
       rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
       leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
       surveyState         = DRIVING;
-      Serial.println("[SURVEY] Cooldown over — DRIVING");
+      logLine("[SURVEY] Cooldown over - DRIVING");
     } else {
       runDrivingPID(dt_motor);
     }
@@ -415,7 +434,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     bool mustDecide = (!frontOpen) || (newCell && (rightGapJustOpened || rightOpen));
 
     if (mustDecide) {
-      Serial.println("[SURVEY] Decision point");
+      logLine("[SURVEY] Decision point");
       executeDecisionAndTurn();
       surveyState    = TURN_COOLDOWN;
       cooldownStartMs = millis();
@@ -538,6 +557,5 @@ void printTelemetry() {
     surveyComplete ? "SURVEY DONE" : "SURVEY"
   );
 
-  webSocket.broadcastTXT(buf);
-  Serial.println(buf);
+  logLine(String(buf));
 }

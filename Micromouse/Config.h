@@ -54,9 +54,9 @@ float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
 float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
 float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
 
-float Kp_tunnel = 0.12f, Kd_tunnel = 0.08f;
-float Kp_single = 0.06f, Kd_single = 0.12f;
-float Kp_wall   = 0.12f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
+float Kp_tunnel = 0.15f, Kd_tunnel = 0.08f;
+float Kp_single = 0.10f, Kd_single = 0.12f;
+float Kp_wall   = 0.19f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
 
 float baseTargetVelocity = 50.0f;
 int   basePWM            = 35;
@@ -81,7 +81,7 @@ float wall_tolerance = 10.0f;
 const int   WALL_THRESHOLD         = 110;
 const float SINGLE_WALL_TARGET_MM  = 63.0f;
 const int   FRONT_STOP_MM          = 120;
-const int   FRONT_HALT_MM          = 40;
+const int   FRONT_HALT_MM          = 45;
 const float CELL_SIZE_NAV_MM       = 155.0f;
 const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;
 const float CENTRE_TOLERANCE_MM    = 15.0f;
