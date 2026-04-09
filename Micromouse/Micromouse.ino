@@ -87,7 +87,7 @@ int logHistoryStart = 0;
 int logHistoryCount = 0;
 
 // ==========================================
-// SHARED STATE
+// SHARED STATE & DEBUG VARIABLES
 // ==========================================
 float integral_vel_L = 0, integral_vel_R = 0;
 float prev_error_vel_L = 0, prev_error_vel_R = 0;
@@ -99,6 +99,10 @@ long prevLeftTicks  = 0;
 long prevRightTicks = 0;
 int  final_pwm_L    = 0;
 int  final_pwm_R    = 0;
+
+// Global variables for telemetry access
+float debug_err_L = 0, debug_err_R = 0;
+float debug_d_L   = 0, debug_d_R   = 0;
 
 DistanceData current_lidars;
 EKFTelemetry ekfTelemetry = {0.0f, 0.0f, 0.0f};
@@ -142,7 +146,6 @@ void runSurveyUpdate(float dt_motor, bool doMotor);
 // RESET HELPERS
 // ==========================================
 void resetPIDIntegrals() {
-
   integral_vel_L = 0; prev_error_vel_L = 0;
   integral_vel_R = 0; prev_error_vel_R = 0;
   integral_yaw   = 0; prev_error_yaw   = 0;
@@ -372,10 +375,6 @@ void loop() {
 
 // ==========================================
 // SURVEY UPDATE
-// Right-hand-rule traversal with wall mapping.
-// Identical logic to the previous working ino
-// but now neatly encapsulated so the main
-// loop can switch cleanly to other phases.
 // ==========================================
 void runSurveyUpdate(float dt_motor, bool doMotor) {
   if (!doMotor) return;
@@ -423,7 +422,6 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
       surveyState         = DRIVING;
       logLine("[SURVEY] Cooldown over - DRIVING");
     } else {
-      runDrivingPID(dt_motor);
     }
 
   } else {  // DRIVING
@@ -432,7 +430,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
     bool rightGapJustOpened = (rightOpen && rightWallWasPresent);
-    bool mustDecide = (!frontOpen) || (newCell && (rightGapJustOpened || rightOpen));
+    bool mustDecide = (!frontOpen);
 
     if (mustDecide) {
       logLine("[SURVEY] Decision point");
@@ -459,19 +457,30 @@ void runDrivingPID(float dt_motor) {
   float vel_L = (float)(cL - prevLeftTicks);
   float vel_R = (float)(cR - prevRightTicks);
 
+  // Heading correction
+  // 1. Calculate the raw difference
   float error_yaw = targetYaw - current_yaw_angle;
+
+  // 2. Wrap the difference to strictly be between -180.0 and +180.0
+  while (error_yaw > 180.0f) {
+    error_yaw -= 360.0f;
+  }
+  while (error_yaw <= -180.0f) {
+    error_yaw += 360.0f;
+  }
   if (fabsf(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
   integral_yaw += error_yaw * dt_motor;
   float deriv_yaw   = (error_yaw - prev_error_yaw) / dt_motor;
   float heading_corr = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
   prev_error_yaw    = error_yaw;
 
+  // Braking 
   float brakeFactor = frontBrakeScale();
   if (brakeFactor <= 0.0f) {
     applyMotorPWM(0, 0);
     final_pwm_L = 0; final_pwm_R = 0;
-    integral_vel_L = 0; integral_vel_R = 0;
-    prev_error_vel_L = 0; prev_error_vel_R = 0;
+    debug_err_L = 0; debug_err_R = 0;
+    debug_d_L = 0;   debug_d_R = 0;
     return;
   }
 
@@ -481,30 +490,30 @@ void runDrivingPID(float dt_motor) {
   float tgt_L = effVel - heading_corr;
   float tgt_R = effVel + heading_corr;
 
-  float err_L = tgt_L - vel_L;
-  float err_R = tgt_R - vel_R;
+  // Assign to global debug variables
+  debug_err_L = tgt_L - vel_L;
+  debug_err_R = tgt_R - vel_R;
 
-  if (fabsf(err_L) <= vel_tolerance) { err_L = 0; prev_error_vel_L = 0; }
-  if (fabsf(err_R) <= vel_tolerance) { err_R = 0; prev_error_vel_R = 0; }
+  if (fabsf(debug_err_L) <= vel_tolerance) { debug_err_L = 0; prev_error_vel_L = 0; }
+  if (fabsf(debug_err_R) <= vel_tolerance) { debug_err_R = 0; prev_error_vel_R = 0; }
 
-  integral_vel_L += err_L * dt_motor;
-  integral_vel_R += err_R * dt_motor;
+  integral_vel_L += debug_err_L * dt_motor;
+  integral_vel_R += debug_err_R * dt_motor;
 
-  float d_L = (err_L - prev_error_vel_L) / dt_motor;
-  float d_R = (err_R - prev_error_vel_R) / dt_motor;
+  debug_d_L = (debug_err_L - prev_error_vel_L) / dt_motor;
+  debug_d_R = (debug_err_R - prev_error_vel_R) / dt_motor;
 
-  final_pwm_L = effPWM + (int)((Kp_vel_L * err_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * d_L));
-  final_pwm_R = effPWM + (int)((Kp_vel_R * err_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * d_R));
+  final_pwm_L = effPWM + (int)((Kp_vel_L * debug_err_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * debug_d_L));
+  final_pwm_R = effPWM + (int)((Kp_vel_R * debug_err_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * debug_d_R));
 
-  prev_error_vel_L = err_L;
-  prev_error_vel_R = err_R;
+  prev_error_vel_L = debug_err_L;
+  prev_error_vel_R = debug_err_R;
 
   applyMotorPWM(final_pwm_L, final_pwm_R);
 }
 
 // ==========================================
 // WALL CENTERING PID (survey phase)
-// Only called when surveyState == DRIVING
 // ==========================================
 void runWallPIDLoop(float dt) {
   bool hasLeft  = (current_lidars.left  < WALL_THRESHOLD);
@@ -546,16 +555,15 @@ void printTelemetry() {
   long cL = leftTicks, cR = rightTicks;
   interrupts();
 
-  char buf[320];
+  char buf[450]; 
   snprintf(buf, sizeof(buf),
-    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d | Cell: %d/%d/%s | Phase: %s",
-    baseTargetVelocity,
-    cL, cR,
+    "PWM:%d/%d | Yaw:%.1f | Lidar:%d/%d/%d | Cell:%d,%d | dL:%.2f dR:%.2f | eL:%.2f eR:%.2f",
     final_pwm_L, final_pwm_R,
     current_yaw_angle,
     current_lidars.left, current_lidars.front, current_lidars.right,
-    ctGetRow(), ctGetCol(), headingName(ctGetHeading()),
-    surveyComplete ? "SURVEY DONE" : "SURVEY"
+    ctGetRow(), ctGetCol(),
+    debug_d_L, debug_d_R,
+    debug_err_L, debug_err_R
   );
 
   logLine(String(buf));

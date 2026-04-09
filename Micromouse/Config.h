@@ -96,7 +96,7 @@ const float TRACK_WIDTH_MM          = 72.0f;
 // ==========================================
 // DECISION THRESHOLDS
 // ==========================================
-const int WALL_MISSING_THRESHOLD   = 180;
+const int WALL_MISSING_THRESHOLD   = 110;
 const int FRONT_BLOCKED_THRESHOLD  = 70;
 
 #endif
