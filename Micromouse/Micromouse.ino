@@ -10,8 +10,6 @@
 #include "ekf.h"
 #include "CellTracker.h"
 #include "WallMap.h"
-#include "Floodfill.h"
-#include "Solver.h"
 #include "Turns.h"
 
 // ==========================================
@@ -68,6 +66,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+// Goal coordinates for survey completion
+const int GOAL_ROW = 5;
+const int GOAL_COL = 5;
+
 // ==========================================
 // LOOP TIMING
 // ==========================================
@@ -109,13 +111,6 @@ enum BotState {
   TURN_COOLDOWN
 };
 
-enum ExplorePhase {
-  EXPLORE_OUTBOUND,
-  EXPLORE_RETURN,
-  EXPLORE_DONE
-};
-
-ExplorePhase  explorePhase     = EXPLORE_OUTBOUND;
 BotState      surveyState      = DRIVING;
 unsigned long cooldownStartMs  = 0;
 const unsigned long TURN_COOLDOWN_MS = 800;
@@ -147,6 +142,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor);
 // RESET HELPERS
 // ==========================================
 void resetPIDIntegrals() {
+
   integral_vel_L = 0; prev_error_vel_L = 0;
   integral_vel_R = 0; prev_error_vel_R = 0;
   integral_yaw   = 0; prev_error_yaw   = 0;
@@ -161,7 +157,7 @@ void resetWallPID() {
 }
 
 // ==========================================
-// FRONT BRAKE SCALE
+// FRONT BRAKE SCALE (survey phase)
 // ==========================================
 float frontBrakeScale() {
   int d = current_lidars.front;
@@ -234,37 +230,26 @@ void broadcastMazeWebReport() {
 
 // ==========================================
 // EXECUTE DECISION AND TURN (survey phase)
-// Uses Map-Driven Floodfill Logic
+// Right-hand rule: right → straight → left → U-turn
 // ==========================================
 void executeDecisionAndTurn() {
   current_lidars = readLidars();
   delay(20);
   float turnDeltaDeg = 0.0f;
 
-  // Query the live map for the minimum-distance path
-  MazeHeading nextHeading = ffGetExploreMove(ctGetRow(), ctGetCol(), ctGetHeading());
-  
-  // Calculate relative turn
-  int headingDiff = ((int)nextHeading - (int)ctGetHeading() + 4) % 4;
+  bool rightOpen = (current_lidars.right > WALL_MISSING_THRESHOLD);
+  bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
+  bool leftOpen  = (current_lidars.left  > WALL_MISSING_THRESHOLD);
 
-  logPrintf("[DEC] Current: %s, Next: %s", 
-            headingName(ctGetHeading()), headingName(nextHeading));
+  logPrintf("[DEC] R=%s F=%s L=%s",
+    rightOpen ? "open" : "wall",
+    frontOpen ? "open" : "wall",
+    leftOpen  ? "open" : "wall");
 
-  if (headingDiff == 0) {
-    logLine("[DEC] STRAIGHT");
-  } else if (headingDiff == 1) {
-    logLine("[DEC] TURN RIGHT");
-    turnCW90();
-    turnDeltaDeg = -90.0f;
-  } else if (headingDiff == 3) {
-    logLine("[DEC] TURN LEFT");
-    turnACW90();
-    turnDeltaDeg = 90.0f;
-  } else if (headingDiff == 2) {
-    logLine("[DEC] DEAD END - U-TURN");
-    turn180();
-    turnDeltaDeg = -180.0f;
-  }
+  if      (rightOpen) { logLine("[DEC] TURN RIGHT");        turnCW90();  turnDeltaDeg = -90.0f;  }
+  else if (frontOpen) { logLine("[DEC] STRAIGHT");                                            }
+  else if (leftOpen)  { logLine("[DEC] TURN LEFT");         turnACW90(); turnDeltaDeg = 90.0f;   }
+  else                { logLine("[DEC] DEAD END - U-TURN"); turn180();   turnDeltaDeg = -180.0f; }
 
   delay(100);
   baseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
@@ -339,12 +324,11 @@ void setup() {
 
   unsigned long now = millis();
   lastLoopTime = lastLidarTime = lastPrintTime = now;
-  
+
   surveyState    = DRIVING;
-  explorePhase   = EXPLORE_OUTBOUND;
   surveyComplete = false;
 
-  logLine("Setup complete - Floodfill Mode Engaged");
+  logLine("Setup complete - survey mode only");
 }
 
 // ==========================================
@@ -355,6 +339,7 @@ void loop() {
   server.handleClient();
 
   unsigned long now = millis();
+
   if (now - lastPrintTime >= PRINT_INTERVAL_MS) {
     lastPrintTime = now;
     printTelemetry();
@@ -363,32 +348,23 @@ void loop() {
   bool doLidar = (now - lastLidarTime >= LIDAR_INTERVAL_MS);
   bool doMotor = (now - lastLoopTime  >= LOOP_INTERVAL_MS);
 
-  float dt_lidar = 0.0f;
-  float dt_motor = 0.0f;
-
   if (doLidar) {
-    dt_lidar = (now - lastLidarTime) / 1000.0f;
-    lastLidarTime = now;
-  }
-  if (doMotor) {
-    dt_motor = (now - lastLoopTime) / 1000.0f;
-    lastLoopTime = now;
+    float dt_lidar = (now - lastLidarTime) / 1000.0f;
+    lastLidarTime  = now;
+    current_lidars = readLidars();
+
+    if (!surveyComplete && surveyState == DRIVING) {
+      runWallPIDLoop(dt_lidar);
+    }
   }
 
-  if (surveyComplete) {
-    // Let Solver.h handle both Motor and Lidar timings natively
-    if (doMotor || doLidar) {
-      solverUpdate(dt_motor, dt_lidar, doMotor, doLidar);
-    }
-  } else {
-    // Phase 1 Handling (Exploration)
-    if (doLidar) {
-      current_lidars = readLidars();
-      if (surveyState == DRIVING) {
-        runWallPIDLoop(dt_lidar);
-      }
-    }
-    if (doMotor) {
+  if (doMotor) {
+    float dt_motor = (now - lastLoopTime) / 1000.0f;
+    lastLoopTime   = now;
+
+    if (surveyComplete) {
+      applyMotorPWM(0, 0);
+    } else {
       runSurveyUpdate(dt_motor, true);
     }
   }
@@ -396,7 +372,10 @@ void loop() {
 
 // ==========================================
 // SURVEY UPDATE
-// Floodfill Navigation with Wall Mapping
+// Right-hand-rule traversal with wall mapping.
+// Identical logic to the previous working ino
+// but now neatly encapsulated so the main
+// loop can switch cleanly to other phases.
 // ==========================================
 void runSurveyUpdate(float dt_motor, bool doMotor) {
   if (!doMotor) return;
@@ -406,6 +385,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
   long curL = leftTicks, curR = rightTicks;
   interrupts();
   long dL = curL - prevLeftTicks, dR = curR - prevRightTicks;
+
   current_yaw_angle = readYawDegrees();
   ekfPredict(dL, dR);
   ekfUpdateYawDeg(current_yaw_angle);
@@ -417,42 +397,17 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     printCellWalls(ctGetRow(), ctGetCol());
     printCellState();
 
-    // --- Floodfill Algorithm Iteration 1 ---
-    if (explorePhase == EXPLORE_OUTBOUND) {
-      ffBuildLiveFlood(getGoalCells());
-      if (isGoal(ctGetRow(), ctGetCol())) {
-        explorePhase = EXPLORE_RETURN;
-        logLine("[SURVEY] Goal cell reached! Returning to start.");
-        ffBuildLiveFlood({{0, 0}}); // Switch target back to start
-      }
-    } 
-    else if (explorePhase == EXPLORE_RETURN) {
-      ffBuildLiveFlood({{0, 0}});
-      if (ctGetRow() == 0 && ctGetCol() == 0) {
-        // --- PHASE 1 COMPLETE ---
-        surveyComplete = true;
-        explorePhase   = EXPLORE_DONE;
-        surveyState    = TURN_COOLDOWN;
-        logLine("");
-        logLine("[SURVEY] Start cell reached! Exploration complete.");
-        printWallMapASCII();
-        broadcastMazeWebReport();
-        
-        // --- PREPARE PHASE 2 (A* Speed Run) ---
-        logLine("[SOLVER] Building Flood-Fill Heuristic...");
-        ffBuildHeuristic(getGoalCells()); // Lock in optimal heuristic
-        
-        if (ffComputePath(0, 0, getGoalCells())) {
-           logLine("[SOLVER] A* Path computed. Ready for Speed Run!");
-           solverInit(ctGetHeading()); // Boot up Solver.h
-        } else {
-           logLine("[SOLVER] ERROR: No valid path found by A*.");
-        }
-        
-        prevLeftTicks  = curL;
-        prevRightTicks = curR;
-        return;
-      }
+    if (ctGetRow() == GOAL_ROW && ctGetCol() == GOAL_COL) {
+      applyMotorPWM(0, 0);
+      surveyComplete = true;
+      surveyState    = TURN_COOLDOWN;
+      logLine("");
+      logLine("[SURVEY] Goal cell reached! Survey complete.");
+      printWallMapASCII();
+      broadcastMazeWebReport();
+      prevLeftTicks  = curL;
+      prevRightTicks = curR;
+      return;
     }
   }
 
@@ -477,11 +432,8 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
     bool rightGapJustOpened = (rightOpen && rightWallWasPresent);
-    
-    // In Floodfill mode, we must make a decision anytime we enter a new cell
-    // OR if we are forced to (blocked front)
-    bool mustDecide = (!frontOpen) || newCell;
-    
+    bool mustDecide = (!frontOpen) || (newCell && (rightGapJustOpened || rightOpen));
+
     if (mustDecide) {
       logLine("[SURVEY] Decision point");
       executeDecisionAndTurn();
@@ -552,6 +504,7 @@ void runDrivingPID(float dt_motor) {
 
 // ==========================================
 // WALL CENTERING PID (survey phase)
+// Only called when surveyState == DRIVING
 // ==========================================
 void runWallPIDLoop(float dt) {
   bool hasLeft  = (current_lidars.left  < WALL_THRESHOLD);
@@ -562,16 +515,13 @@ void runWallPIDLoop(float dt) {
     Kp_wall    = Kp_tunnel; Kd_wall = Kd_tunnel;
     error_wall = (float)(current_lidars.left - current_lidars.right);
   } else if (hasLeft) {
-    Kp_wall    = Kp_single;
-    Kd_wall = Kd_single;
+    Kp_wall    = Kp_single; Kd_wall = Kd_single;
     error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
   } else if (hasRight) {
-    Kp_wall    = Kp_single;
-    Kd_wall = Kd_single;
+    Kp_wall    = Kp_single; Kd_wall = Kd_single;
     error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
   } else {
-    correction_angle = 0.0f; integral_wall = 0.0f;
-    prev_error_wall = 0.0f;
+    correction_angle = 0.0f; integral_wall = 0.0f; prev_error_wall = 0.0f;
     targetYaw        = baseTargetYaw;
     return;
   }
@@ -581,7 +531,7 @@ void runWallPIDLoop(float dt) {
   integral_wall    += error_wall * dt;
   float deriv_wall  = (error_wall - prev_error_wall) / dt;
   float corr        = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
-  
+
   correction_angle  = (correction_angle * 0.7f) + (corr * 0.3f);
   correction_angle  = constrain(correction_angle, -8.0f, 8.0f);
   prev_error_wall   = error_wall;
@@ -605,7 +555,8 @@ void printTelemetry() {
     current_yaw_angle,
     current_lidars.left, current_lidars.front, current_lidars.right,
     ctGetRow(), ctGetCol(), headingName(ctGetHeading()),
-    surveyComplete ? "A* SOLVE" : (explorePhase == EXPLORE_OUTBOUND ? "OUTBOUND" : "RETURN")
+    surveyComplete ? "SURVEY DONE" : "SURVEY"
   );
+
   logLine(String(buf));
 }
