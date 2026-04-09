@@ -118,7 +118,7 @@ enum ExplorePhase {
 ExplorePhase  explorePhase     = EXPLORE_OUTBOUND;
 BotState      surveyState      = DRIVING;
 unsigned long cooldownStartMs  = 0;
-const unsigned long TURN_COOLDOWN_MS = 800;
+const unsigned long TURN_COOLDOWN_MS = 100;
 bool surveyComplete = false;
 
 bool rightWallWasPresent = true;
@@ -505,8 +505,8 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
       leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
       surveyState         = DRIVING;
       logLine("[SURVEY] Cooldown over - DRIVING");
-    } else {
       runDrivingPID(dt_motor);
+    } else {
     }
 
   } else {  // DRIVING
@@ -546,6 +546,12 @@ void runDrivingPID(float dt_motor) {
   float vel_R = (float)(cR - prevRightTicks);
 
   float error_yaw = targetYaw - current_yaw_angle;
+  while (error_yaw > 180.0f) {
+    error_yaw -= 360.0f;
+  }
+  while (error_yaw <= -180.0f) {
+    error_yaw += 360.0f;
+  }
   if (fabsf(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
   integral_yaw += error_yaw * dt_motor;
   float deriv_yaw   = (error_yaw - prev_error_yaw) / dt_motor;
