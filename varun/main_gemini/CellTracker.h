@@ -18,7 +18,7 @@
 // ==========================================
 // CONSTANTS
 // ==========================================
-const float CELL_SIZE_MM        = 155.0f;  // Change to 155.0f if your physical maze uses smaller cells
+const float CELL_SIZE_MM        = 160.0f;  // Change to 155.0f if your physical maze uses smaller cells
 const float CELL_ENTRY_MARGIN   = 20.0f;   // must be this far past a cell boundary
                                             // before a transition is confirmed
                                             // (prevents false triggers near boundaries)

@@ -324,7 +324,8 @@ void setup() {
   current_yaw_angle = baseTargetYaw = targetYaw = 0.0f;
 
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
-  ekfInit(0.0f, 0.0f, 0.0f);
+  float startOffset = 80.0
+  ekfInit(startOffset, 0.0f, 0.0f);
   initCellTracker();
   initWallMap();
 
@@ -395,6 +396,41 @@ void loop() {
 }
 
 // ==========================================
+// ALIGN TO CENTER (Survey Phase)
+// ==========================================
+void surveyAlignToCentre() {
+  float distanceToCenter = CELL_HALF_MM - CELL_ENTRY_MARGIN;
+
+  if (distanceToCenter <= 0) return;
+
+  float targetTicks = (distanceToCenter / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV;
+
+  noInterrupts();
+  long startL = leftTicks, startR = rightTicks;
+  interrupts();
+
+  float yawRef = readYawDegrees();
+
+  while (true) {
+    noInterrupts();
+    long cL = leftTicks, cR = rightTicks;
+    interrupts();
+
+    float moved = ((cL - startL) + (cR - startR)) / 2.0f;
+    if (moved >= targetTicks) {
+      applyMotorPWM(0,0);
+      delay(50); 
+      break;
+    }
+
+    float yaw_err = yawRef - readYawDegrees();
+    int corr = (int)(Kp_yaw * yaw_err * 20.0f);
+    applyMotorPWM(basePWM - corr, basePWM + corr);
+    delay(10);
+  }
+}
+
+// ==========================================
 // SURVEY UPDATE
 // Floodfill Navigation with Wall Mapping
 // ==========================================
@@ -413,6 +449,8 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
 
   bool newCell = updateCellTracker();
   if (newCell) {
+    surveyAlignToCentre();
+    current_lidars = readLidars();
     recordWalls(ctGetRow(), ctGetCol(), ctGetHeading(), current_lidars);
     printCellWalls(ctGetRow(), ctGetCol());
     printCellState();

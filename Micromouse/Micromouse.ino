@@ -432,7 +432,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
 
     bool rightGapJustOpened = (rightOpen && rightWallWasPresent);
-    bool mustDecide = (!frontOpen) || (newCell && (rightGapJustOpened || rightOpen));
+    bool mustDecide = (!frontOpen);
 
     if (mustDecide) {
       logLine("[SURVEY] Decision point");
