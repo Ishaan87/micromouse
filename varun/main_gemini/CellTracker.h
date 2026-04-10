@@ -3,62 +3,28 @@
 
 #include "ekf.h"
 
-// ==========================================
-// CELL TRACKER
-// Translates EKF continuous pose (x_mm, y_mm,
-// theta_rad) into discrete maze cells (row, col)
-// and absolute heading (N/E/S/W).
-//
-// Coordinate convention:
-//   row  → increases along EKF x_mm (forward)
-//   col  → increases along EKF y_mm (rightward drift)
-//   (0,0) = starting cell
-// ==========================================
+const float CELL_SIZE_MM        = 160.0f;  
+const float CELL_ENTRY_MARGIN   = 20.0f;   
 
-// ==========================================
-// CONSTANTS
-// ==========================================
-const float CELL_SIZE_MM        = 160.0f;  // Change to 155.0f if your physical maze uses smaller cells
-const float CELL_ENTRY_MARGIN   = 20.0f;   // must be this far past a cell boundary
-                                            // before a transition is confirmed
-                                            // (prevents false triggers near boundaries)
-
-// ==========================================
-// HEADING ENUM
-// ==========================================
 enum MazeHeading {
-  HEADING_NORTH = 0,   // robot's initial forward direction
-  HEADING_EAST  = 1,   // turned right once
-  HEADING_SOUTH = 2,   // turned around
-  HEADING_WEST  = 3    // turned left once
+  HEADING_NORTH = 0,   
+  HEADING_EAST  = 1,   
+  HEADING_SOUTH = 2,   
+  HEADING_WEST  = 3    
 };
 
-// ==========================================
-// CELL TRACKER STATE
-// ==========================================
 static int  ct_currentRow     = 0;
 static int  ct_currentCol     = 0;
 static int  ct_previousRow    = 0;
 static int  ct_previousCol    = 0;
 static MazeHeading ct_heading = HEADING_NORTH;
-static bool ct_cellJustEntered = false;   // true for ONE update cycle when
-                                          // robot crosses into a new cell
+static bool ct_cellJustEntered = false;   
 
-// ==========================================
-// HEADING HELPERS
-// ==========================================
-
-// Convert EKF theta (radians, wrapped -PI..PI)
-// to the nearest cardinal heading.
-// At start, theta=0 means facing North.
 inline MazeHeading headingFromTheta(float theta_rad) {
   float deg = ekfRadToDeg(theta_rad);
-
-  // Normalise to 0..360
   while (deg <    0.0f) deg += 360.0f;
   while (deg >= 360.0f) deg -= 360.0f;
 
-  // Each quadrant is 90° wide, centred on 0/90/180/270
   if (deg <  45.0f || deg >= 315.0f) return HEADING_NORTH;
   if (deg <  135.0f)                 return HEADING_EAST;
   if (deg <  225.0f)                 return HEADING_SOUTH;
@@ -75,10 +41,6 @@ inline const char* headingName(MazeHeading h) {
   }
 }
 
-// ==========================================
-// INIT
-// Call once after ekfInit() in setup().
-// ==========================================
 void initCellTracker() {
   ct_currentRow      = 0;
   ct_currentCol      = 0;
@@ -88,38 +50,31 @@ void initCellTracker() {
   ct_cellJustEntered = false;
 }
 
-// ==========================================
-// UPDATE — call every control loop tick
-// (inside runControlLoop, after ekfPredict
-// and ekfUpdateYawDeg have already run)
-//
-// Returns true if robot just entered a new cell.
-// The caller should read walls immediately when
-// this returns true.
-// ==========================================
 bool updateCellTracker() {
   EKFState s = ekfGetState();
 
-  // --- Compute cell indices from EKF pose ---
-  // We use (pos + margin) / cell_size so the
-  // transition fires slightly inside the new cell,
-  // not right on the boundary edge.
+  // Unified floorf math ensures uniform 160x160 grid blocks
   int newRow = (int)floorf(s.x_mm / CELL_SIZE_MM);
-  int newCol = (int)roundf(-s.y_mm / CELL_SIZE_MM); // Changed to roundf
-  // Note: col is centred so that small lateral
-  // drift near zero doesn't flip the column.
+  int newCol = (int)floorf(-s.y_mm / CELL_SIZE_MM); 
 
-  // --- Update heading from theta ---
   ct_heading = headingFromTheta(s.theta_rad);
-
-  // --- Detect cell transition ---
   ct_cellJustEntered = false;
 
-  if (newRow != ct_currentRow) {
-    // Confirm the robot is genuinely INSIDE the new cell
-    // (not just grazing the boundary)
-    float posInCellX = fmodf(fabsf(s.x_mm), CELL_SIZE_MM);
-    if (posInCellX > CELL_ENTRY_MARGIN || newRow != ct_currentRow) {
+  if (newRow != ct_currentRow || newCol != ct_currentCol) {
+    // Get positive module wrapper for both axes
+    float x_mod = fmodf(s.x_mm, CELL_SIZE_MM);
+    if (x_mod < 0) x_mod += CELL_SIZE_MM;
+    float y_mod = fmodf(-s.y_mm, CELL_SIZE_MM);
+    if (y_mod < 0) y_mod += CELL_SIZE_MM;
+
+    // Check margin relative to direction of travel
+    bool pastMargin = false;
+    if (ct_heading == HEADING_NORTH) pastMargin = (x_mod > CELL_ENTRY_MARGIN);
+    else if (ct_heading == HEADING_SOUTH) pastMargin = (x_mod < (CELL_SIZE_MM - CELL_ENTRY_MARGIN));
+    else if (ct_heading == HEADING_EAST) pastMargin = (y_mod > CELL_ENTRY_MARGIN);
+    else if (ct_heading == HEADING_WEST) pastMargin = (y_mod < (CELL_SIZE_MM - CELL_ENTRY_MARGIN));
+
+    if (pastMargin) {
       ct_previousRow     = ct_currentRow;
       ct_previousCol     = ct_currentCol;
       ct_currentRow      = newRow;
@@ -131,18 +86,12 @@ bool updateCellTracker() {
   return ct_cellJustEntered;
 }
 
-// ==========================================
-// GETTERS
-// ==========================================
 inline int         ctGetRow()     { return ct_currentRow;  }
 inline int         ctGetCol()     { return ct_currentCol;  }
 inline MazeHeading ctGetHeading() { return ct_heading;     }
 inline int         ctGetPrevRow() { return ct_previousRow; }
 inline int         ctGetPrevCol() { return ct_previousCol; }
 
-// ==========================================
-// SERIAL DEBUG
-// ==========================================
 void printCellState() {
   EKFState s = ekfGetState();
   Serial.printf(
