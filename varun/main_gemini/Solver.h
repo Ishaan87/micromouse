@@ -9,6 +9,9 @@
 #include "Sensors.h"
 #include "ekf.h"
 
+// ============================================================
+// SOLVER — Speed-Run Phase Constants
+// ============================================================
 const float SOLVE_BASE_VELOCITY  = 90.0f;   
 const int   SOLVE_BASE_PWM       = 65;
 const float SOLVE_TURN_APPROACH_VELOCITY = 45.0f;
@@ -43,6 +46,7 @@ static MazeHeading sv_currentHeading = HEADING_NORTH;
 static unsigned long sv_cooldownStart = 0;
 static float sv_pendingTurnDeg = 0.0f;
 
+// External references linked to Micromouse.ino
 extern float baseTargetYaw;
 extern float targetYaw;
 extern float correction_angle;
@@ -71,8 +75,12 @@ extern float Kd_wall;
 extern float Ki_wall;
 extern float wall_tolerance;
 
+// Helper from Micromouse.ino
 float getEKFDistanceToCenter();
 
+// ============================================================
+// INTERNAL HELPERS
+// ============================================================
 static void sv_resetAllPID() {
   integral_vel_L = 0; 
   prev_error_vel_L = 0;
@@ -110,9 +118,13 @@ static float sv_frontBrakeScale() {
 static void executeSolveTurn(float turnDeltaDeg) {
   float nextBaseTargetYaw = sv_wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
   
-  if (turnDeltaDeg == -90.0f) turnCW90(nextBaseTargetYaw);
-  else if (turnDeltaDeg == 90.0f) turnACW90(nextBaseTargetYaw);
-  else if (fabsf(turnDeltaDeg) == 180.0f) turn180(nextBaseTargetYaw);
+  if (turnDeltaDeg == -90.0f) {
+      turnCW90(nextBaseTargetYaw);
+  } else if (turnDeltaDeg == 90.0f) {
+      turnACW90(nextBaseTargetYaw);
+  } else if (fabsf(turnDeltaDeg) == 180.0f) {
+      turn180(nextBaseTargetYaw);
+  }
 
   delay(100);
   baseTargetYaw = nextBaseTargetYaw;
@@ -120,6 +132,9 @@ static void executeSolveTurn(float turnDeltaDeg) {
   sv_resetAllPID();
 }
 
+// ============================================================
+// SOLVER PID LOOPS
+// ============================================================
 static void sv_runDrivingPID(float dt, float algorithmScale, bool isApproaching, long cL, long cR) {
   float vel_L = (float)(cL - prevLeftTicks);
   float vel_R = (float)(cR - prevRightTicks);
@@ -142,8 +157,7 @@ static void sv_runDrivingPID(float dt, float algorithmScale, bool isApproaching,
   float lidarBrake = sv_frontBrakeScale();
   float finalScale;
 
-  // The Clash Fix: If the algorithm is intentionally braking us to the center,
-  // ignore the Lidar so they don't fight.
+  // The Clash Fix: Algorithm overrides Lidar during controlled braking
   if (algorithmScale > 0.9f) {
       finalScale = min(lidarBrake, algorithmScale);
   } else {
@@ -227,6 +241,9 @@ static void sv_runWallPID(float dt) {
   targetYaw = baseTargetYaw + correction_angle;
 }
 
+// ============================================================
+// MAIN SOLVER API
+// ============================================================
 void solverInit(MazeHeading startHeading) {
   sv_moveIndex      = 0;
   sv_pathLen        = ffGetPathLength();
@@ -242,7 +259,9 @@ void solverInit(MazeHeading startHeading) {
   Serial.printf("[SV] Solver initialised. Path length=%d. Heading=%s\n", sv_pathLen, headingName(startHeading));
 }
 
-inline bool solverDone() { return sv_state == SV_GOAL_REACHED; }
+inline bool solverDone() { 
+    return sv_state == SV_GOAL_REACHED; 
+}
 
 void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
   if (sv_state == SV_GOAL_REACHED) { 
@@ -252,7 +271,8 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
 
   if (doLidar) {
     current_lidars = readLidars();
-    if (sv_state == SV_STRAIGHT || sv_state == SV_APPROACHING) {
+    // Keep Wall PID running during braking
+    if (sv_state == SV_STRAIGHT || sv_state == SV_APPROACHING || sv_state == SV_BRAKING_TO_CENTER) {
         sv_runWallPID(dt_lidar);
     }
   }
@@ -318,7 +338,11 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
         sv_state = SV_COOLDOWN;
       } else {
         float totalBrakeDist = 80.0f - CELL_ENTRY_MARGIN; // 60.0f
-        float slowDownFactor = max(0.0f, distanceLeft / totalBrakeDist);
+        float slowDownFactor = distanceLeft / totalBrakeDist;
+        
+        // Anti-Stall Crawl Fix
+        slowDownFactor = constrain(slowDownFactor, 0.35f, 1.0f);
+        
         sv_runDrivingPID(dt_motor, slowDownFactor, true, curL, curR); 
       }
       break;

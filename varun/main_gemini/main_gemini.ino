@@ -423,7 +423,8 @@ void loop() {
   } else {
     if (doLidar) {
       current_lidars = readLidars();
-      if (surveyState == DRIVING) {
+      // Keep Wall PID running during braking
+      if (surveyState == DRIVING || surveyState == BRAKING_TO_CENTER) {
           runWallPIDLoop(dt_lidar);
       }
     }
@@ -452,7 +453,7 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
   bool newCell = updateCellTracker();
   
   if (newCell) {
-    // current_lidars = readLidars();
+    // Delete synchronous lidar poll here - async only!
     recordWalls(ctGetRow(), ctGetCol(), ctGetHeading(), current_lidars);
 
     if (ctGetRow() == GOAL_ROW && ctGetCol() == GOAL_COL) {
@@ -490,15 +491,19 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
   } else if (surveyState == BRAKING_TO_CENTER) {
     float distanceLeft = getEKFDistanceToCenter();
     
-    // The Tolerance & Clash fix
+    // Tolerances Applied: 5.0f for math, pure emergency 25mm for Lidar
     if (distanceLeft <= 5.0f || current_lidars.front <= 25) {
         applyMotorPWM(0, 0); 
         executeSavedTurn(pendingTurn);
         surveyState = TURN_COOLDOWN;
         cooldownStartMs = millis();
     } else {
-        float totalBrakeDist = 80.0f - CELL_ENTRY_MARGIN; 
-        float slowDownFactor = max(0.0f, distanceLeft / totalBrakeDist);
+        float totalBrakeDist = 80.0f - CELL_ENTRY_MARGIN; // 60.0f
+        float slowDownFactor = distanceLeft / totalBrakeDist;
+        
+        // Anti-Stall Crawl Fix
+        slowDownFactor = constrain(slowDownFactor, 0.35f, 1.0f);
+        
         runDrivingPID(dt_motor, slowDownFactor); 
     }
   }
