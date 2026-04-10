@@ -50,30 +50,24 @@ const int XSHUT_RIGHT = 3; // Right VL53L0X
 // TUNING — SURVEY PHASE
 // (conservative — safety over speed)
 // ==========================================
-float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
-float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
-float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
+extern float Kp_vel_L, Ki_vel_L, Kd_vel_L;
+extern float Kp_vel_R, Ki_vel_R, Kd_vel_R;
+extern float Kp_yaw, Ki_yaw, Kd_yaw;
 
-float Kp_tunnel = 0.15f, Kd_tunnel = 0.08f;
-float Kp_single = 0.10f, Kd_single = 0.12f;
-float Kp_wall   = 0.19f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
+extern float Kp_tunnel, Kd_tunnel;
+extern float Kp_single, Kd_single;
+extern float Kp_wall, Kd_wall, Ki_wall;
 
-float baseTargetVelocity = 50.0f;
-int   basePWM            = 50;
+extern float baseTargetVelocity;
+extern int basePWM;
 
-// ==========================================
-// HEADING / YAW MANAGEMENT
-// ==========================================
-float baseTargetYaw    = 0.0f;
-float correction_angle = 0.0f;
-float targetYaw        = 0.0f;
+extern float baseTargetYaw;
+extern float correction_angle;
+extern float targetYaw;
 
-// ==========================================
-// TOLERANCES
-// ==========================================
-float vel_tolerance  = 0.5f;
-float yaw_tolerance  = 0.5f;
-float wall_tolerance = 10.0f;
+extern float vel_tolerance;
+extern float yaw_tolerance;
+extern float wall_tolerance;
 
 // ==========================================
 // GEOMETRY — 155mm cells
@@ -97,6 +91,6 @@ const float TRACK_WIDTH_MM          = 72.0f;
 // DECISION THRESHOLDS
 // ==========================================
 const int WALL_MISSING_THRESHOLD   = 180;
-const int FRONT_BLOCKED_THRESHOLD  = 70;
+const int FRONT_BLOCKED_THRESHOLD  = 90;
 
 #endif

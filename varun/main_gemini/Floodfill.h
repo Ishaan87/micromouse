@@ -16,10 +16,9 @@ struct Pos {
 // Two separate distance tables: 
 // 1. Live distances updated dynamically during the survey phase.
 // 2. Frozen optimal distances used as the A* heuristic.
-static uint8_t live_dist[MAZE_SIZE][MAZE_SIZE];
-static uint8_t flood_dist[MAZE_SIZE][MAZE_SIZE]; 
-
-static std::vector<MazeHeading> ff_path_moves;
+extern uint8_t live_dist[MAZE_SIZE][MAZE_SIZE];
+extern uint8_t flood_dist[MAZE_SIZE][MAZE_SIZE]; 
+extern std::vector<MazeHeading> ff_path_moves;
 
 // ==========================================
 // GOAL DEFINITIONS
@@ -185,7 +184,7 @@ inline bool ffComputePath(int start_r, int start_c, const std::vector<Pos>& targ
         for (auto& t : targets) {
             if (curr.r == t.r && curr.c == t.c) {
                 isGoalNode = true;
-                endPos = curr;
+                endPos = {curr.r, curr.c};
                 break;
             }
         }

@@ -26,23 +26,27 @@ const float TURN_TOLERANCE = 0.5;
 // ==========================================
 // CORE TURNING LOGIC (PD-LOOP)
 // ==========================================
-void turnAngle(float angleDelta) {
-  float startYaw = readYawDegrees();
-  float targetYaw = startYaw + angleDelta;
+float wrapTurnAngleDegrees(float angle) {
+  while (angle > 180.0f) angle -= 360.0f;
+  while (angle <= -180.0f) angle += 360.0f;
+  return angle;
+}
+
+void turnToGlobalYaw(float targetYawGlobal) {
+  targetYawGlobal = wrapTurnAngleDegrees(targetYawGlobal);
 
   float lastError = 0.0;
   unsigned long lastTime = millis();
 
-  // Figure out which way we are turning before the loop starts
-  bool isTurningLeft = (angleDelta > 0);
-
   while (true) {
     float currentYaw = readYawDegrees();
-    float error = targetYaw - currentYaw;
+    float error = wrapTurnAngleDegrees(targetYawGlobal - currentYaw);
 
     if (abs(error) <= TURN_TOLERANCE) {
       break; 
     }
+
+    bool isTurningLeft = (error > 0.0f);
 
     unsigned long now = millis();
     float dt = (now - lastTime) / 1000.0;
@@ -80,8 +84,8 @@ void turnAngle(float angleDelta) {
 // MICROMOUSE MOVEMENT COMMANDS
 // ==========================================
 
-void turnCW90() { turnAngle(-90.0); }
-void turnACW90() { turnAngle(90.0); }
-void turn180() { turnAngle(-180.0); }
+void turnCW90(float targetYawGlobal) { turnToGlobalYaw(targetYawGlobal); }
+void turnACW90(float targetYawGlobal) { turnToGlobalYaw(targetYawGlobal); }
+void turn180(float targetYawGlobal) { turnToGlobalYaw(targetYawGlobal); }
 
 #endif

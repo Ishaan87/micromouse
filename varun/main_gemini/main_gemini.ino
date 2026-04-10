@@ -15,13 +15,40 @@
 #include "Turns.h"
 
 // ==========================================
+// EXTERN MEMORY & CONFIG ALLOCATION
+// (Fixes the Config.h and static array bugs)
+// ==========================================
+uint8_t live_dist[MAZE_SIZE][MAZE_SIZE];
+uint8_t flood_dist[MAZE_SIZE][MAZE_SIZE]; 
+std::vector<MazeHeading> ff_path_moves;
+CellWalls wallMap[MAZE_SIZE][MAZE_SIZE];
+
+float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
+float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
+float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
+
+float Kp_tunnel = 0.15f, Kd_tunnel = 0.08f;
+float Kp_single = 0.10f, Kd_single = 0.12f;
+float Kp_wall   = 0.19f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
+
+float baseTargetVelocity = 50.0f;
+int   basePWM            = 50;
+float baseTargetYaw    = 0.0f;
+float correction_angle = 0.0f;
+float targetYaw        = 0.0f;
+
+float vel_tolerance  = 0.5f;
+float yaw_tolerance  = 0.5f;
+float wall_tolerance = 10.0f;
+
+// ==========================================
 // WIRELESS WEB SERVER SETTINGS
 // ==========================================
 const char *ssid     = "Jerry";
 const char *password = "mouse1234";
 
-WebServer         server(80);
-WebSocketsServer  webSocket(81);
+WebServer        server(80);
+WebSocketsServer webSocket(81);
 
 // ==========================================
 // HTML DASHBOARD
@@ -68,6 +95,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+// Goal coordinates for survey completion
+const int GOAL_ROW = 5;
+const int GOAL_COL = 5;
+
 // ==========================================
 // LOOP TIMING
 // ==========================================
@@ -85,7 +116,7 @@ int logHistoryStart = 0;
 int logHistoryCount = 0;
 
 // ==========================================
-// SHARED STATE
+// SHARED STATE & DEBUG VARIABLES
 // ==========================================
 float integral_vel_L = 0, integral_vel_R = 0;
 float prev_error_vel_L = 0, prev_error_vel_R = 0;
@@ -98,6 +129,10 @@ long prevRightTicks = 0;
 int  final_pwm_L    = 0;
 int  final_pwm_R    = 0;
 
+// Global variables for telemetry access
+float debug_err_L = 0, debug_err_R = 0;
+float debug_d_L   = 0, debug_d_R   = 0;
+
 DistanceData current_lidars;
 EKFTelemetry ekfTelemetry = {0.0f, 0.0f, 0.0f};
 
@@ -106,6 +141,7 @@ EKFTelemetry ekfTelemetry = {0.0f, 0.0f, 0.0f};
 // ==========================================
 enum BotState {
   DRIVING,
+  BRAKING_TO_CENTER,
   TURN_COOLDOWN
 };
 
@@ -118,17 +154,17 @@ enum ExplorePhase {
 ExplorePhase  explorePhase     = EXPLORE_OUTBOUND;
 BotState      surveyState      = DRIVING;
 unsigned long cooldownStartMs  = 0;
-const unsigned long TURN_COOLDOWN_MS = 100;
+const unsigned long TURN_COOLDOWN_MS = 800; 
 bool surveyComplete = false;
 
-bool rightWallWasPresent = true;
-bool leftWallWasPresent  = true;
+// Stores the decision algorithmically while we physically brake to the center
+int pendingTurn = 0; 
 
 // ==========================================
 // FORWARD DECLARATIONS
 // ==========================================
 void runWallPIDLoop(float dt);
-void runDrivingPID(float dt_motor);
+void runDrivingPID(float dt_motor, float algorithmScale = 1.0f);
 void printTelemetry();
 void resetPIDIntegrals();
 void resetWallPID();
@@ -140,7 +176,7 @@ void logLine(const String &line);
 void logPrintf(const char *format, ...);
 String buildMazeWebReport();
 void broadcastMazeWebReport();
-void executeDecisionAndTurn();
+void executeSavedTurn(int headingDiff);
 void runSurveyUpdate(float dt_motor, bool doMotor);
 
 // ==========================================
@@ -233,48 +269,42 @@ void broadcastMazeWebReport() {
 }
 
 // ==========================================
-// EXECUTE DECISION AND TURN (survey phase)
-// Uses Map-Driven Floodfill Logic
+// EXECUTE SAVED TURN
 // ==========================================
-void executeDecisionAndTurn() {
-  current_lidars = readLidars();
-  delay(20);
+void executeSavedTurn(int headingDiff) {
   float turnDeltaDeg = 0.0f;
-
-  // Query the live map for the minimum-distance path
-  MazeHeading nextHeading = ffGetExploreMove(ctGetRow(), ctGetCol(), ctGetHeading());
-  
-  // Calculate relative turn
-  int headingDiff = ((int)nextHeading - (int)ctGetHeading() + 4) % 4;
-
-  logPrintf("[DEC] Current: %s, Next: %s", 
-            headingName(ctGetHeading()), headingName(nextHeading));
+  float nextBaseTargetYaw = baseTargetYaw;
 
   if (headingDiff == 0) {
-    logLine("[DEC] STRAIGHT");
+    logLine("[DEC] STRAIGHT (Should not happen from dead stop)");
   } else if (headingDiff == 1) {
     logLine("[DEC] TURN RIGHT");
-    turnCW90();
     turnDeltaDeg = -90.0f;
   } else if (headingDiff == 3) {
     logLine("[DEC] TURN LEFT");
-    turnACW90();
     turnDeltaDeg = 90.0f;
   } else if (headingDiff == 2) {
     logLine("[DEC] DEAD END - U-TURN");
-    turn180();
     turnDeltaDeg = -180.0f;
   }
 
+  // Calculate global target yaw
+  nextBaseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
+
+  // Call the Turns.h functions with the global yaw target
+  if (turnDeltaDeg == -90.0f) {
+    turnCW90(nextBaseTargetYaw);
+  } else if (turnDeltaDeg == 90.0f) {
+    turnACW90(nextBaseTargetYaw);
+  } else if (turnDeltaDeg == -180.0f) {
+    turn180(nextBaseTargetYaw);
+  }
+
   delay(100);
-  baseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
+  baseTargetYaw = nextBaseTargetYaw;
   targetYaw     = baseTargetYaw;
   resetPIDIntegrals();
   resetWallPID();
-
-  current_lidars      = readLidars();
-  rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
-  leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
 }
 
 // ==========================================
@@ -324,8 +354,10 @@ void setup() {
   current_yaw_angle = baseTargetYaw = targetYaw = 0.0f;
 
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
-  float startOffset = 80.0
-  ekfInit(startOffset, 0.0f, 0.0f);
+  
+  // BUG 6 FIXED: EKF initialized to 0.0 to prevent instant-trigger center bug
+  ekfInit(0.0f, 0.0f, 0.0f); 
+  
   initCellTracker();
   initWallMap();
 
@@ -333,10 +365,6 @@ void setup() {
   prevLeftTicks = prevRightTicks = 0;
   resetPIDIntegrals();
   resetWallPID();
-
-  current_lidars      = readLidars();
-  rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
-  leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
 
   unsigned long now = millis();
   lastLoopTime = lastLidarTime = lastPrintTime = now;
@@ -377,12 +405,10 @@ void loop() {
   }
 
   if (surveyComplete) {
-    // Let Solver.h handle both Motor and Lidar timings natively
     if (doMotor || doLidar) {
       solverUpdate(dt_motor, dt_lidar, doMotor, doLidar);
     }
   } else {
-    // Phase 1 Handling (Exploration)
     if (doLidar) {
       current_lidars = readLidars();
       if (surveyState == DRIVING) {
@@ -396,148 +422,108 @@ void loop() {
 }
 
 // ==========================================
-// ALIGN TO CENTER (Survey Phase)
-// ==========================================
-void surveyAlignToCentre() {
-  float distanceToCenter = CELL_HALF_MM - CELL_ENTRY_MARGIN;
-
-  if (distanceToCenter <= 0) return;
-
-  float targetTicks = (distanceToCenter / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV;
-
-  noInterrupts();
-  long startL = leftTicks, startR = rightTicks;
-  interrupts();
-
-  float yawRef = readYawDegrees();
-
-  while (true) {
-    noInterrupts();
-    long cL = leftTicks, cR = rightTicks;
-    interrupts();
-
-    float moved = ((cL - startL) + (cR - startR)) / 2.0f;
-    if (moved >= targetTicks) {
-      applyMotorPWM(0,0);
-      delay(50); 
-      break;
-    }
-
-    float yaw_err = yawRef - readYawDegrees();
-    int corr = (int)(Kp_yaw * yaw_err * 20.0f);
-    applyMotorPWM(basePWM - corr, basePWM + corr);
-    delay(10);
-  }
-}
-
-// ==========================================
-// SURVEY UPDATE
-// Floodfill Navigation with Wall Mapping
+// SURVEY UPDATE (EKF Continuous Flow)
 // ==========================================
 void runSurveyUpdate(float dt_motor, bool doMotor) {
   if (!doMotor) return;
 
-  // EKF tick
+  // 1. Update Odometry
   noInterrupts();
   long curL = leftTicks, curR = rightTicks;
   interrupts();
   long dL = curL - prevLeftTicks, dR = curR - prevRightTicks;
+  
   current_yaw_angle = readYawDegrees();
   ekfPredict(dL, dR);
   ekfUpdateYawDeg(current_yaw_angle);
   ekfTelemetry = ekfGetTelemetry();
+  
+  prevLeftTicks  = curL;
+  prevRightTicks = curR;
 
+  // 2. Map State Update
   bool newCell = updateCellTracker();
   if (newCell) {
-    surveyAlignToCentre();
     current_lidars = readLidars();
     recordWalls(ctGetRow(), ctGetCol(), ctGetHeading(), current_lidars);
     printCellWalls(ctGetRow(), ctGetCol());
     printCellState();
 
-    // --- Floodfill Algorithm Iteration 1 ---
-    if (explorePhase == EXPLORE_OUTBOUND) {
-      ffBuildLiveFlood(getGoalCells());
-      if (isGoal(ctGetRow(), ctGetCol())) {
-        explorePhase = EXPLORE_RETURN;
-        logLine("[SURVEY] Goal cell reached! Returning to start.");
-        ffBuildLiveFlood({{0, 0}}); // Switch target back to start
-      }
-    } 
-    else if (explorePhase == EXPLORE_RETURN) {
-      ffBuildLiveFlood({{0, 0}});
-      if (ctGetRow() == 0 && ctGetCol() == 0) {
-        // --- PHASE 1 COMPLETE ---
+    if (ctGetRow() == GOAL_ROW && ctGetCol() == GOAL_COL) {
         surveyComplete = true;
         explorePhase   = EXPLORE_DONE;
         surveyState    = TURN_COOLDOWN;
-        logLine("");
-        logLine("[SURVEY] Start cell reached! Exploration complete.");
+        logLine("\n[SURVEY] Goal cell reached! Exploration complete.");
         printWallMapASCII();
         broadcastMazeWebReport();
         
-        // --- PREPARE PHASE 2 (A* Speed Run) ---
         logLine("[SOLVER] Building Flood-Fill Heuristic...");
-        ffBuildHeuristic(getGoalCells()); // Lock in optimal heuristic
+        ffBuildHeuristic({{GOAL_ROW, GOAL_COL}}); 
         
-        if (ffComputePath(0, 0, getGoalCells())) {
+        if (ffComputePath(0, 0, {{GOAL_ROW, GOAL_COL}})) {
            logLine("[SOLVER] A* Path computed. Ready for Speed Run!");
-           solverInit(ctGetHeading()); // Boot up Solver.h
+           solverInit(ctGetHeading()); 
         } else {
            logLine("[SOLVER] ERROR: No valid path found by A*.");
         }
-        
-        prevLeftTicks  = curL;
-        prevRightTicks = curR;
         return;
-      }
+    }
+
+    // Ask Floodfill for the next move
+    MazeHeading nextHeading = ffGetExploreMove(ctGetRow(), ctGetCol(), ctGetHeading());
+    int headingDiff = ((int)nextHeading - (int)ctGetHeading() + 4) % 4;
+    
+    bool wallInFront = (current_lidars.front < FRONT_BLOCKED_THRESHOLD);
+
+    logPrintf("[DEC] Current: %s, Next: %s", 
+              headingName(ctGetHeading()), headingName(nextHeading));
+
+    if (headingDiff == 0 && !wallInFront) {
+        logLine("[SURVEY] Path clear - cruising straight.");
+        surveyState = DRIVING; 
+    } else {
+        logLine("[SURVEY] Turn or Wall detected - braking to center.");
+        surveyState = BRAKING_TO_CENTER;
+        pendingTurn = headingDiff;
     }
   }
 
-  prevLeftTicks  = curL;
-  prevRightTicks = curR;
-
-  // ── SURVEY STATE MACHINE ──
+  // 3. State Machine Driving Logic
   if (surveyState == TURN_COOLDOWN) {
     if (millis() - cooldownStartMs >= TURN_COOLDOWN_MS) {
-      current_lidars      = readLidars();
-      rightWallWasPresent = (current_lidars.right < WALL_MISSING_THRESHOLD);
-      leftWallWasPresent  = (current_lidars.left  < WALL_MISSING_THRESHOLD);
-      surveyState         = DRIVING;
+      surveyState = DRIVING;
       logLine("[SURVEY] Cooldown over - DRIVING");
-      runDrivingPID(dt_motor);
-    } else {
     }
-
-  } else {  // DRIVING
-    bool rightOpen = (current_lidars.right > WALL_MISSING_THRESHOLD);
-    bool leftOpen  = (current_lidars.left  > WALL_MISSING_THRESHOLD);
-    bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
-
-    bool rightGapJustOpened = (rightOpen && rightWallWasPresent);
+  } 
+  else if (surveyState == DRIVING) {
+    runDrivingPID(dt_motor, 1.0f); 
+  }
+  else if (surveyState == BRAKING_TO_CENTER) {
+    EKFState s = ekfGetState();
     
-    // In Floodfill mode, we must make a decision anytime we enter a new cell
-    // OR if we are forced to (blocked front)
-    bool mustDecide = (!frontOpen) || newCell;
+    // Braking mathematically locked to 160.0f cell size
+    float halfCell = 160.0f / 2.0f; // 80.0f
+    float posInCellX = fmodf(fabsf(s.x_mm), 160.0f); 
+    float distanceLeft = halfCell - posInCellX;
     
-    if (mustDecide) {
-      logLine("[SURVEY] Decision point");
-      executeDecisionAndTurn();
-      surveyState    = TURN_COOLDOWN;
-      cooldownStartMs = millis();
+    if (distanceLeft <= 0.0f || current_lidars.front < FRONT_HALT_MM) {
+        applyMotorPWM(0, 0); 
+        executeSavedTurn(pendingTurn);
+        
+        surveyState = TURN_COOLDOWN;
+        cooldownStartMs = millis();
     } else {
-      runDrivingPID(dt_motor);
+        float totalBrakeDist = halfCell - CELL_ENTRY_MARGIN;
+        float slowDownFactor = max(0.0f, distanceLeft / totalBrakeDist);
+        runDrivingPID(dt_motor, slowDownFactor); 
     }
-
-    rightWallWasPresent = !rightOpen;
-    leftWallWasPresent  = !leftOpen;
   }
 }
 
 // ==========================================
-// DRIVING PID (survey phase)
+// DRIVING PID
 // ==========================================
-void runDrivingPID(float dt_motor) {
+void runDrivingPID(float dt_motor, float algorithmScale) {
   noInterrupts();
   long cL = leftTicks, cR = rightTicks;
   interrupts();
@@ -546,56 +532,56 @@ void runDrivingPID(float dt_motor) {
   float vel_R = (float)(cR - prevRightTicks);
 
   float error_yaw = targetYaw - current_yaw_angle;
-  while (error_yaw > 180.0f) {
-    error_yaw -= 360.0f;
-  }
-  while (error_yaw <= -180.0f) {
-    error_yaw += 360.0f;
-  }
+  error_yaw = wrapAngleDegrees(error_yaw);
   if (fabsf(error_yaw) <= yaw_tolerance) { error_yaw = 0; prev_error_yaw = 0; }
+  
   integral_yaw += error_yaw * dt_motor;
   float deriv_yaw   = (error_yaw - prev_error_yaw) / dt_motor;
   float heading_corr = (Kp_yaw * error_yaw) + (Ki_yaw * integral_yaw) + (Kd_yaw * deriv_yaw);
   prev_error_yaw    = error_yaw;
 
-  float brakeFactor = frontBrakeScale();
-  if (brakeFactor <= 0.0f) {
+  float lidarBrake = frontBrakeScale(); 
+  float finalScale = min(lidarBrake, algorithmScale);
+
+  if (finalScale <= 0.0f) {
     applyMotorPWM(0, 0);
     final_pwm_L = 0; final_pwm_R = 0;
     integral_vel_L = 0; integral_vel_R = 0;
     prev_error_vel_L = 0; prev_error_vel_R = 0;
+    debug_err_L = 0; debug_err_R = 0;
+    debug_d_L = 0;   debug_d_R = 0;
     return;
   }
 
-  float effVel = baseTargetVelocity * brakeFactor;
-  int   effPWM = (int)(basePWM * brakeFactor);
+  float effVel = baseTargetVelocity * finalScale;
+  int   effPWM = (int)(basePWM * finalScale);
 
   float tgt_L = effVel - heading_corr;
   float tgt_R = effVel + heading_corr;
 
-  float err_L = tgt_L - vel_L;
-  float err_R = tgt_R - vel_R;
+  debug_err_L = tgt_L - vel_L;
+  debug_err_R = tgt_R - vel_R;
 
-  if (fabsf(err_L) <= vel_tolerance) { err_L = 0; prev_error_vel_L = 0; }
-  if (fabsf(err_R) <= vel_tolerance) { err_R = 0; prev_error_vel_R = 0; }
+  if (fabsf(debug_err_L) <= vel_tolerance) { debug_err_L = 0; prev_error_vel_L = 0; }
+  if (fabsf(debug_err_R) <= vel_tolerance) { debug_err_R = 0; prev_error_vel_R = 0; }
 
-  integral_vel_L += err_L * dt_motor;
-  integral_vel_R += err_R * dt_motor;
+  integral_vel_L += debug_err_L * dt_motor;
+  integral_vel_R += debug_err_R * dt_motor;
 
-  float d_L = (err_L - prev_error_vel_L) / dt_motor;
-  float d_R = (err_R - prev_error_vel_R) / dt_motor;
+  debug_d_L = (debug_err_L - prev_error_vel_L) / dt_motor;
+  debug_d_R = (debug_err_R - prev_error_vel_R) / dt_motor;
 
-  final_pwm_L = effPWM + (int)((Kp_vel_L * err_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * d_L));
-  final_pwm_R = effPWM + (int)((Kp_vel_R * err_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * d_R));
+  final_pwm_L = effPWM + (int)((Kp_vel_L * debug_err_L) + (Ki_vel_L * integral_vel_L) + (Kd_vel_L * debug_d_L));
+  final_pwm_R = effPWM + (int)((Kp_vel_R * debug_err_R) + (Ki_vel_R * integral_vel_R) + (Kd_vel_R * debug_d_R));
 
-  prev_error_vel_L = err_L;
-  prev_error_vel_R = err_R;
+  prev_error_vel_L = debug_err_L;
+  prev_error_vel_R = debug_err_R;
 
   applyMotorPWM(final_pwm_L, final_pwm_R);
 }
 
 // ==========================================
-// WALL CENTERING PID (survey phase)
+// WALL CENTERING PID
 // ==========================================
 void runWallPIDLoop(float dt) {
   bool hasLeft  = (current_lidars.left  < WALL_THRESHOLD);
@@ -606,12 +592,10 @@ void runWallPIDLoop(float dt) {
     Kp_wall    = Kp_tunnel; Kd_wall = Kd_tunnel;
     error_wall = (float)(current_lidars.left - current_lidars.right);
   } else if (hasLeft) {
-    Kp_wall    = Kp_single;
-    Kd_wall = Kd_single;
+    Kp_wall = Kp_single; Kd_wall = Kd_single;
     error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
   } else if (hasRight) {
-    Kp_wall    = Kp_single;
-    Kd_wall = Kd_single;
+    Kp_wall = Kp_single; Kd_wall = Kd_single;
     error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
   } else {
     correction_angle = 0.0f; integral_wall = 0.0f;
@@ -640,16 +624,11 @@ void printTelemetry() {
   long cL = leftTicks, cR = rightTicks;
   interrupts();
 
-  char buf[320];
+  char buf[450];
   snprintf(buf, sizeof(buf),
-    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | Lidar: %d / %d / %d | Cell: %d/%d/%s | Phase: %s",
-    baseTargetVelocity,
-    cL, cR,
-    final_pwm_L, final_pwm_R,
-    current_yaw_angle,
-    current_lidars.left, current_lidars.front, current_lidars.right,
-    ctGetRow(), ctGetCol(), headingName(ctGetHeading()),
-    surveyComplete ? "A* SOLVE" : (explorePhase == EXPLORE_OUTBOUND ? "OUTBOUND" : "RETURN")
+    "Cell:%d,%d",
+    ctGetRow(), ctGetCol()
   );
+
   logLine(String(buf));
 }
