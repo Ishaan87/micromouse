@@ -26,9 +26,11 @@ inline MazeHeading headingFromTheta(float theta_rad) {
   while (deg >= 360.0f) deg -= 360.0f;
 
   if (deg <  45.0f || deg >= 315.0f) return HEADING_NORTH;
-  if (deg <  135.0f)                 return HEADING_EAST;
+  
+  // REVERTED: Your original logic was correct based on your EKF IMU mapping!
+  if (deg <  135.0f)                 return HEADING_WEST;  
   if (deg <  225.0f)                 return HEADING_SOUTH;
-  return HEADING_WEST;
+  return HEADING_EAST;                                     
 }
 
 inline const char* headingName(MazeHeading h) {
@@ -53,7 +55,6 @@ void initCellTracker() {
 bool updateCellTracker() {
   EKFState s = ekfGetState();
 
-  // Unified floorf math ensures uniform 160x160 grid blocks
   int newRow = (int)floorf(s.x_mm / CELL_SIZE_MM);
   int newCol = (int)floorf(-s.y_mm / CELL_SIZE_MM); 
 
@@ -61,13 +62,11 @@ bool updateCellTracker() {
   ct_cellJustEntered = false;
 
   if (newRow != ct_currentRow || newCol != ct_currentCol) {
-    // Get positive module wrapper for both axes
     float x_mod = fmodf(s.x_mm, CELL_SIZE_MM);
     if (x_mod < 0) x_mod += CELL_SIZE_MM;
     float y_mod = fmodf(-s.y_mm, CELL_SIZE_MM);
     if (y_mod < 0) y_mod += CELL_SIZE_MM;
 
-    // Check margin relative to direction of travel
     bool pastMargin = false;
     if (ct_heading == HEADING_NORTH) pastMargin = (x_mod > CELL_ENTRY_MARGIN);
     else if (ct_heading == HEADING_SOUTH) pastMargin = (x_mod < (CELL_SIZE_MM - CELL_ENTRY_MARGIN));
@@ -91,16 +90,5 @@ inline int         ctGetCol()     { return ct_currentCol;  }
 inline MazeHeading ctGetHeading() { return ct_heading;     }
 inline int         ctGetPrevRow() { return ct_previousRow; }
 inline int         ctGetPrevCol() { return ct_previousCol; }
-
-void printCellState() {
-  EKFState s = ekfGetState();
-  Serial.printf(
-    "CELL (%d,%d) heading=%s | EKF x=%.1f y=%.1f th=%.1f\n",
-    ct_currentRow, ct_currentCol,
-    headingName(ct_heading),
-    s.x_mm, s.y_mm,
-    ekfRadToDeg(s.theta_rad)
-  );
-}
 
 #endif
