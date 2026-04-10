@@ -105,7 +105,7 @@ bool updateCellTracker() {
   // transition fires slightly inside the new cell,
   // not right on the boundary edge.
   int newRow = (int)floorf(s.x_mm / CELL_SIZE_MM);
-  int newCol = (int)floorf(-s.y_mm / CELL_SIZE_MM);
+  int newCol = (int)roundf(-s.y_mm / CELL_SIZE_MM); // Changed to roundf
   // Note: col is centred so that small lateral
   // drift near zero doesn't flip the column.
 

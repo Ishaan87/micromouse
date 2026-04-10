@@ -1,0 +1,75 @@
+// ============================================================
+// CHANGES TO testing_folder.ino
+// Add these lines in the exact locations described below.
+// Nothing existing is removed or modified.
+// ============================================================
+
+
+// ── LOCATION 1: Top of file, after existing #includes ───────
+// Add these two lines after line 9 (#include "EKF.h")
+
+#include "CellTracker.h"
+#include "WallMap.h"
+
+
+// ── LOCATION 2: Inside setup(), after ekfInit() ─────────────
+// After the lines:
+//   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
+//   ekfInit(0.0f, 0.0f, 0.0f);
+// Add:
+
+  initCellTracker();
+  initWallMap();
+
+
+// ── LOCATION 3: Inside runControlLoop(), after EKF lines ────
+// After the lines:
+//   ekfPredict(deltaLeftTicks, deltaRightTicks);
+//   ekfUpdateYawDeg(current_yaw_angle);
+//   ekfTelemetry = ekfGetTelemetry();
+// Add:
+
+  // Cell tracker — runs every control loop tick
+  bool newCell = updateCellTracker();
+  if (newCell) {
+    // Robot just entered a new cell — snapshot walls immediately
+    recordWalls(
+      ctGetRow(),
+      ctGetCol(),
+      ctGetHeading(),
+      current_lidars        // already populated by runWallPIDLoop
+    );
+    printCellWalls(ctGetRow(), ctGetCol());   // serial debug
+    printCellState();                         // serial debug
+  }
+
+
+// ── LOCATION 4 (optional): Inside printTelemetry() ──────────
+// You can expand the telemetry string to include cell info.
+// Replace the snprintf format string section with this:
+
+  snprintf(
+    telemetryString,
+    sizeof(telemetryString),
+    "Target: %.1f | Enc: %ld / %ld | PWM: %d / %d | Yaw: %.2f | EKF: %.1f, %.1f, %.2f | Cell: (%d,%d) %s | Lidar: %d / %d / %d",
+    baseTargetVelocity,
+    currLeft,
+    currRight,
+    final_pwm_L,
+    final_pwm_R,
+    current_yaw_angle,
+    ekfTelemetry.x_mm,
+    ekfTelemetry.y_mm,
+    ekfTelemetry.theta_deg,
+    ctGetRow(), ctGetCol(), headingName(ctGetHeading()),   // ← new
+    current_lidars.left,
+    current_lidars.front,
+    current_lidars.right
+  );
+
+
+// ── LOCATION 5 (optional): After final EKF print in maybeFinalizeDistance() ──
+// After Serial.println("===================================");
+// Add:
+
+    printWallMapASCII();   // dumps visited cells and their walls at end of run

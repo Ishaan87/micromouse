@@ -68,7 +68,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 // Goal coordinates for survey completion
 const int GOAL_ROW = 5;
-const int GOAL_COL = 5;
+const int GOAL_COL = -5;
 
 // ==========================================
 // LOOP TIMING
@@ -239,6 +239,7 @@ void executeDecisionAndTurn() {
   current_lidars = readLidars();
   delay(20);
   float turnDeltaDeg = 0.0f;
+  float nextBaseTargetYaw = baseTargetYaw;
 
   bool rightOpen = (current_lidars.right > WALL_MISSING_THRESHOLD);
   bool frontOpen = (current_lidars.front > FRONT_BLOCKED_THRESHOLD);
@@ -249,13 +250,23 @@ void executeDecisionAndTurn() {
     frontOpen ? "open" : "wall",
     leftOpen  ? "open" : "wall");
 
-  if      (rightOpen) { logLine("[DEC] TURN RIGHT");        turnCW90();  turnDeltaDeg = -90.0f;  }
-  else if (frontOpen) { logLine("[DEC] STRAIGHT");                                            }
-  else if (leftOpen)  { logLine("[DEC] TURN LEFT");         turnACW90(); turnDeltaDeg = 90.0f;   }
-  else                { logLine("[DEC] DEAD END - U-TURN"); turn180();   turnDeltaDeg = -180.0f; }
+  if      (rightOpen) { logLine("[DEC] TURN RIGHT");        turnDeltaDeg = -90.0f;  }
+  else if (frontOpen) { logLine("[DEC] STRAIGHT");                             }
+  else if (leftOpen)  { logLine("[DEC] TURN LEFT");         turnDeltaDeg = 90.0f;   }
+  else                { logLine("[DEC] DEAD END - U-TURN"); turnDeltaDeg = -180.0f; }
+
+  nextBaseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
+
+  if (turnDeltaDeg == -90.0f) {
+    turnCW90(nextBaseTargetYaw);
+  } else if (turnDeltaDeg == 90.0f) {
+    turnACW90(nextBaseTargetYaw);
+  } else if (turnDeltaDeg == -180.0f) {
+    turn180(nextBaseTargetYaw);
+  }
 
   delay(100);
-  baseTargetYaw = wrapAngleDegrees(baseTargetYaw + turnDeltaDeg);
+  baseTargetYaw = nextBaseTargetYaw;
   targetYaw     = baseTargetYaw;
   resetPIDIntegrals();
   resetWallPID();
@@ -556,14 +567,18 @@ void printTelemetry() {
   interrupts();
 
   char buf[450]; 
+  // snprintf(buf, sizeof(buf),
+  //   "PWM:%d/%d | Yaw:%.1f | Lidar:%d/%d/%d | Cell:%d,%d | dL:%.2f dR:%.2f | eL:%.2f eR:%.2f",
+  //   final_pwm_L, final_pwm_R,
+  //   current_yaw_angle,
+  //   current_lidars.left, current_lidars.front, current_lidars.right,
+  //   ctGetRow(), ctGetCol(),
+  //   debug_d_L, debug_d_R,
+  //   debug_err_L, debug_err_R
+  // );
   snprintf(buf, sizeof(buf),
-    "PWM:%d/%d | Yaw:%.1f | Lidar:%d/%d/%d | Cell:%d,%d | dL:%.2f dR:%.2f | eL:%.2f eR:%.2f",
-    final_pwm_L, final_pwm_R,
-    current_yaw_angle,
-    current_lidars.left, current_lidars.front, current_lidars.right,
-    ctGetRow(), ctGetCol(),
-    debug_d_L, debug_d_R,
-    debug_err_L, debug_err_R
+    "Cell:%d,%d",
+    ctGetRow(), ctGetCol()
   );
 
   logLine(String(buf));
