@@ -133,9 +133,10 @@ const unsigned long TURN_COOLDOWN_MS = 800;
 bool surveyComplete = false;
 
 int pendingTurn = 0; 
-long targetBrakeTicks = 0;
-long startBrakeTicks = 0;
 
+// ==========================================
+// FORWARD DECLARATIONS
+// ==========================================
 void runWallPIDLoop(float dt);
 void runDrivingPID(float dt_motor, float algorithmScale = 1.0f);
 void printTelemetry();
@@ -151,6 +152,30 @@ String buildMazeWebReport();
 void broadcastMazeWebReport();
 void executeSavedTurn(int headingDiff);
 void runSurveyUpdate(float dt_motor, bool doMotor);
+
+// ==========================================
+// EKF DYNAMIC AXIS BRAKING
+// ==========================================
+float getEKFDistanceToCenter() {
+  EKFState s = ekfGetState();
+  MazeHeading h = ctGetHeading();
+  
+  // Safe positive modulo for grid wrapping
+  auto posMod = [](float val, float mod) {
+    float res = fmodf(val, mod);
+    return (res < 0) ? res + mod : res;
+  };
+
+  float posInCell = 0.0f;
+  
+  // Read the correct axis based on the direction the robot is facing
+  if (h == HEADING_NORTH) posInCell = posMod(s.x_mm, 160.0f);
+  else if (h == HEADING_SOUTH) posInCell = posMod(-s.x_mm, 160.0f);
+  else if (h == HEADING_EAST)  posInCell = posMod(-s.y_mm, 160.0f);
+  else if (h == HEADING_WEST)  posInCell = posMod(s.y_mm, 160.0f);
+
+  return 80.0f - posInCell; // Distance remaining to the 80mm dead-center
+}
 
 void resetPIDIntegrals() {
   integral_vel_L = 0; prev_error_vel_L = 0;
@@ -269,8 +294,9 @@ void setup() {
   current_yaw_angle = baseTargetYaw = targetYaw = 0.0f;
 
   ekfConfigure(TICKS_PER_REV, WHEEL_CIRCUMFERENCE_MM, TRACK_WIDTH_MM);
-  // Start exactly at the center of cell (0,0) so the grid aligns perfectly
-  ekfInit(80.0f, -80.0f, 0.0f); 
+  
+  // Set to 0.0f so grid modulo aligns perfectly
+  ekfInit(0.0f, 0.0f, 0.0f); 
   
   initCellTracker();
   initWallMap();
@@ -354,12 +380,6 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     } else {
         surveyState = BRAKING_TO_CENTER;
         pendingTurn = headingDiff;
-        
-        // Setup Encoder Braking distance (60mm)
-        float brakeDistMM = (160.0f / 2.0f) - CELL_ENTRY_MARGIN; 
-        long brakeTicks = (long)((brakeDistMM / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV);
-        targetBrakeTicks = curL + brakeTicks;
-        startBrakeTicks = curL;
     }
   }
 
@@ -370,15 +390,16 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
     runDrivingPID(dt_motor, 1.0f); 
   }
   else if (surveyState == BRAKING_TO_CENTER) {
-    long ticksLeft = targetBrakeTicks - curL;
+    float distanceLeft = getEKFDistanceToCenter();
     
-    if (ticksLeft <= 0 || current_lidars.front < FRONT_HALT_MM) {
+    if (distanceLeft <= 0.0f || current_lidars.front < FRONT_HALT_MM) {
         applyMotorPWM(0, 0); 
         executeSavedTurn(pendingTurn);
         surveyState = TURN_COOLDOWN;
         cooldownStartMs = millis();
     } else {
-        float slowDownFactor = max(0.0f, (float)ticksLeft / (float)(targetBrakeTicks - startBrakeTicks));
+        float totalBrakeDist = 80.0f - CELL_ENTRY_MARGIN; // 60.0f
+        float slowDownFactor = max(0.0f, distanceLeft / totalBrakeDist);
         runDrivingPID(dt_motor, slowDownFactor); 
     }
   }
@@ -459,7 +480,6 @@ void printTelemetry() {
   interrupts();
 
   char buf[450];
-  // Telemetry Restored: All PID, Lidar, and Cell data cleanly formatted
   snprintf(buf, sizeof(buf),
     "PWM:%d/%d | Yaw:%.1f | Lid:%d/%d/%d | Cell:%d,%d (%s) | eL:%.1f eR:%.1f | Phs:%s",
     final_pwm_L, final_pwm_R,

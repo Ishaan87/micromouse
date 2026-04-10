@@ -38,10 +38,6 @@ static MazeHeading sv_currentHeading = HEADING_NORTH;
 static unsigned long sv_cooldownStart = 0;
 static float sv_pendingTurnDeg = 0.0f;
 
-// Encoder braking variables
-static long sv_startBrakeTicks = 0;
-static long sv_targetBrakeTicks = 0;
-
 extern float baseTargetYaw, targetYaw, correction_angle;
 extern float integral_yaw, prev_error_yaw;
 extern float integral_vel_L, integral_vel_R, prev_error_vel_L, prev_error_vel_R;
@@ -52,6 +48,9 @@ extern long  prevLeftTicks, prevRightTicks;
 extern DistanceData current_lidars;
 extern EKFTelemetry ekfTelemetry;
 extern float Kp_tunnel, Kd_tunnel, Kp_single, Kd_single, Kp_wall, Kd_wall, Ki_wall, wall_tolerance;
+
+// Ensure this matches the helper in Micromouse.ino
+float getEKFDistanceToCenter();
 
 static void sv_resetAllPID() {
   integral_vel_L = 0; prev_error_vel_L = 0;
@@ -204,13 +203,6 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
         if (requiredHeading != sv_currentHeading) {
           sv_state = SV_BRAKING_TO_CENTER;
           sv_pendingTurnDeg = sv_relativeTurnDeg(sv_currentHeading, requiredHeading);
-          
-          // Set physical brake target 60mm ahead
-          float brakeDistMM = (160.0f / 2.0f) - CELL_ENTRY_MARGIN; 
-          long brakeTicks = (long)((brakeDistMM / WHEEL_CIRCUMFERENCE_MM) * TICKS_PER_REV);
-          sv_targetBrakeTicks = curL + brakeTicks;
-          sv_startBrakeTicks = curL;
-          
           Serial.printf("[SV] Cell %d: Turn needed. BRAKING.\n", sv_moveIndex);
         } else {
           if (sv_moveIndex + 1 < sv_pathLen && ffGetMove(sv_moveIndex + 1) != sv_currentHeading) {
@@ -226,16 +218,17 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
     }
 
     case SV_BRAKING_TO_CENTER: {
-      long ticksLeft = sv_targetBrakeTicks - curL;
+      float distanceLeft = getEKFDistanceToCenter();
 
-      if (ticksLeft <= 0 || current_lidars.front < SOLVE_FRONT_HALT_MM) {
+      if (distanceLeft <= 0.0f || current_lidars.front < SOLVE_FRONT_HALT_MM) {
         applyMotorPWM(0, 0);
         executeSolveTurn(sv_pendingTurnDeg);
         sv_currentHeading = ffGetMove(sv_moveIndex); 
         sv_cooldownStart = millis();
         sv_state = SV_COOLDOWN;
       } else {
-        float slowDownFactor = max(0.0f, (float)ticksLeft / (float)(sv_targetBrakeTicks - sv_startBrakeTicks));
+        float totalBrakeDist = 80.0f - CELL_ENTRY_MARGIN; // 60.0f
+        float slowDownFactor = max(0.0f, distanceLeft / totalBrakeDist);
         sv_runDrivingPID(dt_motor, slowDownFactor, true, curL, curR); 
       }
       break;
