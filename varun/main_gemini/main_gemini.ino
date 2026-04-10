@@ -219,7 +219,10 @@ void replayLogHistory(uint8_t clientNum) {
 void logLine(const String &line) {
   appendLogHistory(line);
   Serial.println(line);
-  webSocket.broadcastTXT(line);
+  
+  // Create a modifiable copy for the picky WebSockets library
+  String message = line; 
+  webSocket.broadcastTXT(message);
 }
 
 void logPrintf(const char *format, ...) {
