@@ -82,15 +82,9 @@ const int   WALL_THRESHOLD         = 110;
 const float SINGLE_WALL_TARGET_MM  = 63.0f;
 const int   FRONT_STOP_MM          = 100;
 const int   FRONT_HALT_MM          = 45;
-<<<<<<< Updated upstream
 const float CELL_SIZE_NAV_MM       = 160.0f;
 const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;
 const float CENTRE_TOLERANCE_MM    = 15.0f;
-=======
-const float CELL_SIZE_NAV_MM       = 165.0f;
-const float CELL_HALF_MM           = CELL_SIZE_NAV_MM / 2.0f;
-const float CENTRE_TOLERANCE_MM    = 20.0f;
->>>>>>> Stashed changes
 
 // ==========================================
 // EKF / ODOMETRY CONSTANTS
