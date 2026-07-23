@@ -1,6 +1,8 @@
 # Micromouse
+
 ## Documentation
 Notion Link - https://righteous-galliform-706.notion.site/Micromouse-Documentry-2f6daaf2795180228459fb6c378282ec?source=copy_link
+
 ## File Structure
 our code is divided into 5 different files - 
 ### Config.h 
@@ -26,3 +28,5 @@ contains the code for all the sensors - L0X, IMU.
 
 ### Micromouse.ino
 Last but definitely not the least, this is the main file which combines all the files together and does all the operations.
+
+hi - sourish

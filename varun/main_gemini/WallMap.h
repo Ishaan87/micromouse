@@ -39,7 +39,7 @@ struct CellWalls {
   bool visited; // has robot been here?
 };
 
-static CellWalls wallMap[MAZE_SIZE][MAZE_SIZE];
+extern CellWalls wallMap[MAZE_SIZE][MAZE_SIZE];
 
 // ==========================================
 // INIT
@@ -156,10 +156,10 @@ void recordWalls(int row, int col, MazeHeading heading, DistanceData lidar) {
 
   WallMapping m = getWallMapping(row, col, heading);
 
-  // Write wall states based on lidar readings
-  *m.frontWall = (lidar.front < WALL_DETECT_MM);
-  *m.leftWall  = (lidar.left  < WALL_DETECT_MM);
-  *m.rightWall = (lidar.right < WALL_DETECT_MM);
+  // Only overwrite if the Lidar reading is valid (not an 8190 out-of-range error)
+  if (lidar.front < 2000) *m.frontWall = (lidar.front < WALL_DETECT_MM);
+  if (lidar.left  < 2000) *m.leftWall  = (lidar.left  < WALL_DETECT_MM);
+  if (lidar.right < 2000) *m.rightWall = (lidar.right < WALL_DETECT_MM);
 
   // Mark cell visited
   wallMap[row][col].visited = true;

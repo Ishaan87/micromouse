@@ -15,9 +15,11 @@
 // Executes the pre-planned path from ffComputePath() as fast
 // as reliably possible. Key differences from the survey phase:
 //
-//  1. PATH IS KNOWN — no lidar-based decisions. The robot
-//     follows the ff_path[] sequence step by step, turning
-//     only when the plan says to, not when a wall gap appears.
+//  1. PATH IS KNOWN — but walls are still recorded every cell.
+//     If a previously unknown wall blocks the planned next move,
+//     ffBuildHeuristic + ffComputePath are called immediately
+//     and the path is replaced in-place. The robot replans
+//     before it would physically hit anything.
 //
 //  2. STRAIGHT-RUN MERGING — consecutive moves in the same
 //     heading direction are merged into one continuous straight
@@ -38,7 +40,7 @@
 //
 // HOW TO USE:
 //   After ffComputePath() returns true:
-//     solverInit(startRow, startCol, startHeading);
+//     solverInit(startHeading);
 //   Then in loop():
 //     solverUpdate(dt_motor, dt_lidar, doMotor, doLidar);
 //   Check solverDone() to know when the goal is reached.
@@ -102,7 +104,7 @@ static bool        sv_turnComingUp    = false;
 // Cooldown timer
 static unsigned long sv_cooldownStart = 0;
 
-// External references — these live in Micromouse.ino.
+// External references — these live in main_gemini.ino.
 // Declared extern so Solver.h can read/write them.
 // (The ino must declare them before including Solver.h.)
 extern float baseTargetYaw;
@@ -118,11 +120,12 @@ extern long  prevLeftTicks, prevRightTicks;
 extern DistanceData current_lidars;
 extern EKFTelemetry ekfTelemetry;
 
-// Wall PID parameters (shared with survey phase via Micromouse.ino)
+// Wall PID parameters (shared with survey phase via main_gemini.ino)
 extern float Kp_tunnel, Kd_tunnel;
 extern float Kp_single, Kd_single;
 extern float Kp_wall, Kd_wall, Ki_wall;
 extern float wall_tolerance;
+
 // ============================================================
 // INTERNAL HELPERS
 // ============================================================
@@ -173,7 +176,7 @@ static float sv_frontBrakeScale() {
   return (float)(d - SOLVE_FRONT_HALT_MM) / (float)(SOLVE_FRONT_STOP_MM - SOLVE_FRONT_HALT_MM);
 }
 
-// Align to cell centre using encoder odometry (identical logic to survey phase)
+// Align to cell centre using encoder odometry
 static void sv_alignToCentre() {
   EKFState s = ekfGetState();
   float posInCell  = fmodf(fabsf(s.x_mm), CELL_SIZE_NAV_MM);
@@ -230,6 +233,65 @@ static void sv_executeTurn() {
 
   // Re-read walls now we're at cell centre facing the new direction
   current_lidars = readLidars();
+}
+
+// ============================================================
+// REPLAN HELPER
+//
+// Called immediately after recordWalls(), before sv_moveIndex++.
+//
+// Checks whether the planned next move is still traversable.
+// If a newly recorded wall blocks it, rebuilds the heuristic
+// on the updated map and reruns A* from the current cell.
+//
+// Sequence contract (must be honoured by every caller):
+//   1. recordWalls()              ← stamp walls into the map
+//   2. sv_replanIfBlocked()       ← check + replan if needed
+//   3. sv_moveIndex++             ← advance only after path confirmed
+//   4. goal / path-length check   ← against possibly-new sv_pathLen
+//   5. state transition           ← re-evaluate STRAIGHT vs APPROACHING
+//
+// Returns true  → path is valid (original or freshly replanned).
+// Returns false → robot is trapped, no path exists. Caller should
+//                 stop motors and enter SV_IDLE.
+// ============================================================
+static bool sv_replanIfBlocked(int row, int col) {
+  // Nothing to check if we are already at or past the last move
+  if (sv_moveIndex >= sv_pathLen) return true;
+
+  MazeHeading plannedNext = ffGetMove(sv_moveIndex);
+
+  // Happy path — planned move is still open
+  if (canMove(row, col, plannedNext)) return true;
+
+  // ── Wall detected on planned route ──
+  Serial.printf("[SV] Wall detected! Planned %s from (%d,%d) is now blocked. Replanning...\n",
+                headingName(plannedNext), row, col);
+
+  // Rebuild floodfill heuristic on the updated wall map, then run A*
+  ffBuildHeuristic(getGoalCells());
+  bool found = ffComputePath(row, col, getGoalCells());
+
+  if (!found) {
+    Serial.println("[SV] ERROR: No path to goal after replan. Robot is trapped.");
+    return false;
+  }
+
+  // Replace path in-place
+  sv_moveIndex = 0;
+  sv_pathLen   = ffGetPathLength();
+
+  // Re-evaluate state for the new first move
+  if (ffGetMove(0) != sv_currentHeading) {
+    sv_state = SV_APPROACHING;
+  } else {
+    sv_state = SV_STRAIGHT;
+  }
+
+  Serial.printf("[SV] Replan OK. New path length=%d. State→%s\n",
+                sv_pathLen,
+                sv_state == SV_APPROACHING ? "APPROACHING" : "STRAIGHT");
+  return true;
 }
 
 // ============================================================
@@ -395,16 +457,24 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
 
     // ─────────────────────────────────────────
     case SV_STRAIGHT: {
-      // Check if the NEXT move (after the one we're currently heading for)
-      // requires a turn. If so, switch to APPROACHING one cell before it.
-      bool turnNext = sv_nextMoveIsTurn();
-
       if (newCell) {
-        // We just entered the next cell — advance move pointer
+        // ── Step 1: Record walls at the cell we just entered ──
+        recordWalls(ctGetRow(), ctGetCol(), sv_currentHeading, current_lidars);
+
+        // ── Step 2: Check if planned next move is still valid; replan if not ──
+        if (!sv_replanIfBlocked(ctGetRow(), ctGetCol())) {
+          // Trapped — no path exists
+          applyMotorPWM(0, 0);
+          sv_state = SV_IDLE;
+          prevLeftTicks = curL; prevRightTicks = curR;
+          return;
+        }
+
+        // ── Step 3: Advance move pointer ──
         sv_moveIndex++;
         Serial.printf("[SV] Cell entered. Move %d/%d.\n", sv_moveIndex, sv_pathLen);
 
-        // Goal check
+        // ── Step 4: Goal check (against possibly-updated sv_pathLen) ──
         if (sv_moveIndex >= sv_pathLen) {
           applyMotorPWM(0, 0);
           sv_state = SV_GOAL_REACHED;
@@ -413,13 +483,11 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
           return;
         }
 
-        // Check if the move we just started requires a turn
+        // ── Step 5: State transition ──
         if (ffGetMove(sv_moveIndex) != sv_currentHeading) {
-          // Turn needed — slow down and head to cell centre
           sv_state = SV_APPROACHING;
           Serial.printf("[SV] → Turn needed at this cell. Entering APPROACHING.\n");
         } else if (sv_nextMoveIsTurn()) {
-          // No turn now, but next cell needs one — pre-emptively slow down
           sv_state = SV_APPROACHING;
           Serial.printf("[SV] → Turn coming next cell. Entering APPROACHING.\n");
         }
@@ -432,10 +500,22 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
 
     // ─────────────────────────────────────────
     case SV_APPROACHING: {
-      // Drive slowly and wait for cell centre, then turn if needed
       if (newCell) {
+        // ── Step 1: Record walls ──
+        recordWalls(ctGetRow(), ctGetCol(), sv_currentHeading, current_lidars);
+
+        // ── Step 2: Replan check ──
+        if (!sv_replanIfBlocked(ctGetRow(), ctGetCol())) {
+          applyMotorPWM(0, 0);
+          sv_state = SV_IDLE;
+          prevLeftTicks = curL; prevRightTicks = curR;
+          return;
+        }
+
+        // ── Step 3: Advance move pointer ──
         sv_moveIndex++;
 
+        // ── Step 4: Goal check ──
         if (sv_moveIndex >= sv_pathLen) {
           applyMotorPWM(0, 0);
           sv_state = SV_GOAL_REACHED;
@@ -445,11 +525,11 @@ void solverUpdate(float dt_motor, float dt_lidar, bool doMotor, bool doLidar) {
         }
       }
 
-      // Check if we now need to turn (move index may have advanced)
+      // ── Step 5: Check if a turn is now required ──
       bool needsTurn = (ffGetMove(sv_moveIndex) != sv_currentHeading);
 
       if (needsTurn) {
-        // Stop driving, align to centre, execute turn
+        // Stop, align to centre, execute turn
         applyMotorPWM(0, 0);
         delay(80);
 
