@@ -54,8 +54,8 @@ float Kp_vel_L = 1.0f,  Ki_vel_L = 0.0f, Kd_vel_L = 0.1f;
 float Kp_vel_R = 1.0f,  Ki_vel_R = 0.0f, Kd_vel_R = 0.1f;
 float Kp_yaw   = 0.6f,  Ki_yaw   = 0.0f, Kd_yaw   = 0.06f;
 
-float Kp_tunnel = 0.15f, Kd_tunnel = 0.08f;
-float Kp_single = 0.10f, Kd_single = 0.12f;
+float Kp_tunnel = 0.2f, Kd_tunnel = 0.1f;
+float Kp_single = 0.15f, Kd_single = 0.15f;
 float Kp_wall   = 0.19f, Kd_wall   = 0.08f, Ki_wall = 0.0f;
 
 float baseTargetVelocity = 50.0f;
@@ -98,6 +98,7 @@ const float CENTRE_TOLERANCE_MM    = 15.0f;
 const float TICKS_PER_REV          = 306.0f;
 const float WHEEL_CIRCUMFERENCE_MM  = 144.5f;
 const float TRACK_WIDTH_MM          = 72.0f;
+const float TICK_RATIO = 0.60f;
 
 // ==========================================
 // DECISION THRESHOLDS

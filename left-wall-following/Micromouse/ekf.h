@@ -81,7 +81,7 @@ void ekfPredict(long deltaLeftTicks, long deltaRightTicks) {
   float dR = ekfTicksToMM((float)deltaRightTicks);
 
   float ds = 0.5f * (dL + dR);
-  float dTheta = (dR - dL) / EKF_TRACK_WIDTH_MM;
+  float dTheta = (dL - dR) / EKF_TRACK_WIDTH_MM;
 
   float thetaMid = ekfState.theta_rad + 0.5f * dTheta;
 

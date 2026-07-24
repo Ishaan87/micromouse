@@ -265,6 +265,10 @@ void runSurveyUpdate(float dt_motor, bool doMotor) {
   interrupts();
   long dL = curL - prevLeftTicks, dR = curR - prevRightTicks;
 
+  // --- NEW HARDWARE FIX ---
+  dR = (long)(dR * (TICK_RATIO));
+  // ------------------------
+
   current_yaw_angle = readYawDegrees();
   ekfPredict(dL, dR);
   ekfUpdateYawDeg(current_yaw_angle);
@@ -334,7 +338,10 @@ void runDrivingPID(float dt_motor) {
   interrupts();
 
   float vel_L = (float)(cL - prevLeftTicks);
-  float vel_R = (float)(cR - prevRightTicks);
+  
+  // --- NEW HARDWARE FIX ---
+  float vel_R = (float)(cR - prevRightTicks)*(TICK_RATIO);
+  // ------------------------
 
   // Heading correction
   // 1. Calculate the raw difference
@@ -402,7 +409,7 @@ void runWallPIDLoop(float dt) {
   // ULTIMATUM: Only use LiDAR correction if we are in a closed tunnel (both walls present)
   if (hasLeft && hasRight) {
     Kp_wall    = Kp_tunnel; Kd_wall = Kd_tunnel;
-    error_wall = (float)(current_lidars.right - current_lidars.left);
+    error_wall = -(float)(current_lidars.right - current_lidars.left);
     
     // Run normal PID calculations for tunnel centering
     if (fabsf(error_wall) <= wall_tolerance) { error_wall = 0.0f; integral_wall = 0.0f; }

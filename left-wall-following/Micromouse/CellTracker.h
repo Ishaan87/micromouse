@@ -60,9 +60,9 @@ inline MazeHeading headingFromTheta(float theta_rad) {
 
   // Each quadrant is 90° wide, centred on 0/90/180/270
   if (deg <  45.0f || deg >= 315.0f) return HEADING_NORTH;
-  if (deg <  135.0f)                 return HEADING_WEST;
+  if (deg <  135.0f)                 return HEADING_EAST;
   if (deg <  225.0f)                 return HEADING_SOUTH;
-  return HEADING_EAST;
+  return HEADING_WEST;
 }
 
 inline const char* headingName(MazeHeading h) {
@@ -105,7 +105,7 @@ bool updateCellTracker() {
   // transition fires slightly inside the new cell,
   // not right on the boundary edge.
   int newRow = (int)floorf(s.x_mm / CELL_SIZE_MM);
-  int newCol = (int)roundf(-s.y_mm / CELL_SIZE_MM); // Changed to roundf
+  int newCol = (int)roundf(s.y_mm / CELL_SIZE_MM); // Changed to roundf
   // Note: col is centred so that small lateral
   // drift near zero doesn't flip the column.
 
