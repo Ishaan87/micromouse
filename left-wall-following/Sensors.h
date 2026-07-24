@@ -2,8 +2,9 @@
 #define SENSORS_H
 
 #include <Adafruit_VL53L0X.h>
-#include <Adafruit_MPU6050.h>
+#include <Adafruit_BNO055.h>
 #include <Adafruit_Sensor.h>
+#include <utility/imumaths.h>
 #include <Wire.h>
 #include "Config.h"
 
@@ -13,15 +14,9 @@
 Adafruit_VL53L0X lox_front = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox_left  = Adafruit_VL53L0X();
 Adafruit_VL53L0X lox_right = Adafruit_VL53L0X();
-Adafruit_MPU6050 mpu;
 
-// ==========================================
-// GYRO CALIBRATION STATE
-// ==========================================
-float gyro_bias = 0.0;
-
-// Deadzone to prevent microscopic vibrations from causing integration drift
-#define GYRO_DEADZONE 0.25  // degrees/s 
+// BNO055: sensor ID 55, default I2C address 0x28
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
 
 // ==========================================
 // DISTANCE DATA STRUCT
@@ -32,6 +27,11 @@ struct DistanceData {
   int right;
 };
 
+// ==========================================
+// LIDAR INIT
+// - shuts all down first, wakes one by one
+//   assigns unique I2C addresses
+// ==========================================
 // ==========================================
 // LIDAR INIT
 // - shuts all down first, wakes one by one
@@ -48,8 +48,9 @@ void initLidars() {
   digitalWrite(XSHUT_RIGHT, LOW);
   delay(150);
 
-  // front → 0x30
-  pinMode(XSHUT_FRONT, INPUT); delay(50);
+  // front -> 0x30
+  digitalWrite(XSHUT_FRONT, HIGH); // Explicitly drive HIGH to wake
+  delay(50);
   if (!lox_front.begin(0x30)) {
     Serial.println("Front lidar NOT found!");
   } else {
@@ -57,8 +58,9 @@ void initLidars() {
   }
   delay(150);
 
-  // left → 0x31
-  pinMode(XSHUT_LEFT, INPUT); delay(50);
+  // left -> 0x31
+  digitalWrite(XSHUT_LEFT, HIGH); // Explicitly drive HIGH to wake
+  delay(50);
   if (!lox_left.begin(0x31)) {
     Serial.println("Left lidar NOT found!");
   } else {
@@ -66,8 +68,9 @@ void initLidars() {
   }
   delay(150);
 
-  // right → 0x32
-  pinMode(XSHUT_RIGHT, INPUT); delay(50);
+  // right -> 0x32
+  digitalWrite(XSHUT_RIGHT, HIGH); // Explicitly drive HIGH to wake
+  delay(50);
   if (!lox_right.begin(0x32)) {
     Serial.println("Right lidar NOT found!");
   } else {
@@ -76,46 +79,50 @@ void initLidars() {
 }
 
 // ==========================================
-// MPU6050 INIT
+// BNO055 INIT
 // ==========================================
 void initIMU() {
-  if (!mpu.begin()) {
-    Serial.println("CRITICAL ERROR: MPU6050 NOT found!");
+  if (!bno.begin()) {
+    Serial.println("CRITICAL ERROR: BNO055 NOT found!");
     return;
-    }
+  }
 
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  // Use external 32.768 kHz crystal for better accuracy
+  bno.setExtCrystalUse(true);
 
-  Serial.println("MPU6050 OK (0x68)");
+  Serial.println("BNO055 OK (0x28)");
 }
 
 // ==========================================
-// GYRO CALIBRATION
-// - keep robot perfectly still during this
+// CALIBRATE GYRO
+// - BNO055 handles sensor fusion internally.
+//   Waits for gyro to reach calibration level
+//   3, then continues. Kept so main.ino
+//   compiles unchanged.
 // ==========================================
 void calibrateGyro() {
-  float sum   = 0;
-  int samples = 1000;
+  uint8_t sys, gyro, accel, mag = 0;
 
-  for (int i = 0; i < samples; i++) {
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    
-    // NOTE: Using .x and converting to degrees/sec based on your main.ino logic
-    sum += (g.gyro.x * 57.2958);   
-    delay(2);
+  Serial.println("Waiting for BNO055 gyro calibration...");
+
+  unsigned long start = millis();
+  while (gyro < 3) {
+    bno.getCalibration(&sys, &gyro, &accel, &mag);
+    Serial.printf("  Sys:%d  Gyro:%d  Accel:%d  Mag:%d\n", sys, gyro, accel, mag);
+    delay(500);
+
+    // Timeout after 10s - continue anyway
+    if (millis() - start > 10000) {
+      Serial.println("Calibration timeout - continuing.");
+      break;
+    }
   }
-
-  gyro_bias = sum / samples;
 }
 
 // ==========================================
 // INIT ALL SENSORS
 // ==========================================
 void initSensors() {
-  // CRITICAL FIX: I2C_SDA must come before I2C_SCL
   Wire.begin(I2C_SCL, I2C_SDA);
   initIMU();
   initLidars();
@@ -141,44 +148,57 @@ DistanceData readLidars() {
 }
 
 // ==========================================
-// READ GYRO
+// READ GYRO HEADING
+// - Returns Z-axis angular velocity in
+//   degrees/sec.
 // ==========================================
 float readGyroHeading() {
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  // Read the vertical axis (X) and convert to degrees/sec
-  float raw_Velocity = g.gyro.x * 57.2958; 
-  float adjusted_Velocity = raw_Velocity - gyro_bias;
-
-  // Apply deadzone to kill residual drift when still
-  if (abs(adjusted_Velocity) < GYRO_DEADZONE) { 
-    return 0.0; 
-  }
-
-  return adjusted_Velocity;
+  imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+  return gyro.z();
 }
 
 // ==========================================
-// READ ACCELEROMETER — for crash detection
+// ABSOLUTE YAW - INTERNAL HELPERS
+// ==========================================
+float _rawYawDegrees() {
+  imu::Quaternion q = bno.getQuat();
+  float yaw = atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                    1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+  return yaw * 57.2958;
+}
+
+// ==========================================
+// UNWRAPPED CONTINUOUS YAW
+// ==========================================
+static float last_raw_yaw  = 0.0;
+static float yaw_unwrapped = 0.0;
+
+void resetYaw() {
+  last_raw_yaw  = _rawYawDegrees();
+  yaw_unwrapped = 0.0;
+}
+
+float readYawDegrees() {
+  float raw = _rawYawDegrees();
+
+  float delta = raw - last_raw_yaw;
+  if (delta > 180.0) delta -= 360.0;
+  if (delta < -180.0) delta += 360.0;
+
+  yaw_unwrapped += delta;
+  last_raw_yaw   = raw;
+
+  return yaw_unwrapped;
+}
+
+// ==========================================
+// READ ACCELEROMETER - for crash detection
 // ==========================================
 float readAccelMagnitude() {
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-
-  return sqrt(a.acceleration.x * a.acceleration.x +
-              a.acceleration.y * a.acceleration.y +
-              a.acceleration.z * a.acceleration.z);
+  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  return sqrt(accel.x() * accel.x() +
+              accel.y() * accel.y() +
+              accel.z() * accel.z());
 }
-
-// ==========================================
-// WALL DETECTION HELPERS
-// ==========================================
-// Note: WALL_THRESHOLD must be defined in your Config.h or main.ino
-// extern const int WALL_THRESHOLD; 
-
-// bool wallFront() { return readLidars().front < WALL_THRESHOLD; }
-// bool wallLeft()  { return readLidars().left  < WALL_THRESHOLD; }
-// bool wallRight() { return readLidars().right < WALL_THRESHOLD; }
 
 #endif

@@ -343,6 +343,7 @@ void setup() {
   surveyComplete = false;
 
   logLine("Setup complete - survey mode only");
+
 }
 
 // ==========================================
@@ -520,44 +521,54 @@ void runDrivingPID(float dt_motor) {
   prev_error_vel_L = debug_err_L;
   prev_error_vel_R = debug_err_R;
 
-  applyMotorPWM(final_pwm_L, final_pwm_R);
+  applyMotorPWM(final_pwm_L, -final_pwm_R);
 }
 
 // ==========================================
-// WALL CENTERING PID (survey phase)
+// WALL CENTERING PID (With IMU Heading Lock Ultimatum)
 // ==========================================
 void runWallPIDLoop(float dt) {
   bool hasLeft  = (current_lidars.left  < WALL_THRESHOLD);
   bool hasRight = (current_lidars.right < WALL_THRESHOLD);
   float error_wall = 0.0f;
 
+  // ULTIMATUM: Only use LiDAR correction if we are in a closed tunnel (both walls present)
   if (hasLeft && hasRight) {
     Kp_wall    = Kp_tunnel; Kd_wall = Kd_tunnel;
     error_wall = (float)(current_lidars.left - current_lidars.right);
-  } else if (hasLeft) {
-    Kp_wall    = Kp_single; Kd_wall = Kd_single;
-    error_wall = -(current_lidars.left - SINGLE_WALL_TARGET_MM);
-  } else if (hasRight) {
-    Kp_wall    = Kp_single; Kd_wall = Kd_single;
-    error_wall = (current_lidars.right - SINGLE_WALL_TARGET_MM);
-  } else {
-    correction_angle = 0.0f; integral_wall = 0.0f; prev_error_wall = 0.0f;
+    
+    // Run normal PID calculations for tunnel centering
+    if (fabsf(error_wall) <= wall_tolerance) { error_wall = 0.0f; integral_wall = 0.0f; }
+
+    integral_wall    += error_wall * dt;
+    float deriv_wall  = (error_wall - prev_error_wall) / dt;
+    float corr        = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
+
+    correction_angle  = (correction_angle * 0.7f) + (corr * 0.3f);
+    correction_angle  = constrain(correction_angle, -8.0f, 8.0f);
+    prev_error_wall   = error_wall;
+    
+    // Update target yaw with lidar adjustments
+    targetYaw         = baseTargetYaw + correction_angle;
+  } 
+  else {
+    // HEADING LOCK ACTIVE: A wall is missing on at least one side.
+    // Explicitly zero out any wall corrections and force the robot to trust the BNO055 entirely.
+    correction_angle = 0.0f;
+    integral_wall    = 0.0f;
+    prev_error_wall  = 0.0f;
+    
+    // Target Yaw is strictly locked to the global grid angle (e.g. exactly 0, 90, -90, etc.)
     targetYaw        = baseTargetYaw;
-    return;
   }
-
-  if (fabsf(error_wall) <= wall_tolerance) { error_wall = 0.0f; integral_wall = 0.0f; }
-
-  integral_wall    += error_wall * dt;
-  float deriv_wall  = (error_wall - prev_error_wall) / dt;
-  float corr        = (Kp_wall * error_wall) + (Ki_wall * integral_wall) + (Kd_wall * deriv_wall);
-
-  correction_angle  = (correction_angle * 0.7f) + (corr * 0.3f);
-  correction_angle  = constrain(correction_angle, -8.0f, 8.0f);
-  prev_error_wall   = error_wall;
-  targetYaw         = baseTargetYaw + correction_angle;
 }
 
+// ==========================================
+// TELEMETRY
+// ==========================================
+// ==========================================
+// TELEMETRY
+// ==========================================
 // ==========================================
 // TELEMETRY
 // ==========================================
@@ -567,11 +578,13 @@ void printTelemetry() {
   interrupts();
 
   char buf[450]; 
-  // Formats Cell coordinates along with Left, Front, and Right Lidar values in mm
+
+  // Formats Cell coordinates, Lidar values in mm, and Encoder tick counts
   snprintf(buf, sizeof(buf),
-    "Cell:%d,%d | Lidar L/F/R: %d / %d / %d mm",
+    "Cell:%d,%d | Lidar L/F/R: %d / %d / %d mm | Enc L:%ld R:%ld",
     ctGetRow(), ctGetCol(),
-    current_lidars.left, current_lidars.front, current_lidars.right
+    current_lidars.left, current_lidars.front, current_lidars.right,
+    cL, cR
   );
 
   logLine(String(buf));
